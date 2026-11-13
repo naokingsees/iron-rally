@@ -48,6 +48,16 @@ html,body{width:100%;height:100%;overflow:hidden;background:#05070b;color:var(--
 .help td{padding:5px 18px;border-bottom:1px solid rgba(255,255,255,.05)}
 .help td:first-child{font-family:'Orbitron';color:var(--cyan);font-weight:700;white-space:nowrap;width:42%}
 kbd{font-family:'Orbitron';font-size:11px}
+/* 狭い・低い画面では、タイトルを上に寄せて操作説明を下にコンパクトに置き、重ならないようにする */
+@media (max-width: 1000px), (max-height: 700px) {
+  .title-wrap{top:5vh;transform:none;left:24px}
+  .tag{margin:12px 0 20px}
+  .menu{gap:10px}
+  .help{left:24px;right:auto;bottom:14px;width:min(420px,calc(100% - 48px));padding-bottom:6px}
+  .help .panel-h{padding:8px 14px 6px}
+  .help table{font-size:12px;margin:2px 0}
+  .help td{padding:2px 14px}
+}
 
 /* ---------- Garage ---------- */
 .g-left{position:absolute;left:20px;top:20px;bottom:20px;width:380px;display:flex;flex-direction:column}
