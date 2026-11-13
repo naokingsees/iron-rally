@@ -72,6 +72,8 @@ mat('Rim', (0.12, 0.12, 0.13), 1.0, 0.3)
 mat('Brake', (0.45, 0.45, 0.46), 1.0, 0.35)
 mat('Caliper', (0.75, 0.05, 0.03), 0.2, 0.4)
 mat('Amber', (1.0, 0.55, 0.05), 0.0, 0.3, emit=(1.0, 0.5, 0.0))
+mat('Underbody', (0.06, 0.065, 0.07), 0.7, 0.55)
+BODY_MATS = ['Paint', 'Glass', 'Trim', 'WellLiner', 'Grille', 'Carbon', 'Chrome', 'HeadLens', 'Reflector', 'HeadLED', 'TailLED', 'TailLens', 'Exhaust', 'Underbody']
 
 
 def new_obj(name, bm, materials):
@@ -236,7 +238,7 @@ def build_body():
     bm.faces.new(rings[0])
     bm.faces.new(list(reversed(rings[-1])))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    ob = new_obj('Body', bm, ['Paint', 'Glass', 'Trim', 'WellLiner', 'Grille', 'Carbon', 'Chrome', 'HeadLens', 'Reflector', 'HeadLED', 'TailLED', 'TailLens', 'Exhaust'])
+    ob = new_obj('Body', bm, BODY_MATS)
     sub = ob.modifiers.new('sub', 'SUBSURF')
     sub.levels = 2
     sub.render_levels = 2
@@ -257,7 +259,7 @@ def point_in_poly(x, y, poly):
 
 
 SIDE_WINDOW = [(0.80, 0.985), (0.55, 1.12), (0.32, 1.255), (-0.25, 1.315), (-0.80, 1.262), (-1.30, 1.05), (-1.20, 1.0), (-0.6, 0.99)]
-MI = {name: i for i, name in enumerate(['Paint', 'Glass', 'Trim', 'WellLiner', 'Grille', 'Carbon', 'Chrome', 'HeadLens', 'Reflector', 'HeadLED', 'TailLED', 'TailLens', 'Exhaust'])}
+MI = {name: i for i, name in enumerate(BODY_MATS)}
 
 
 def assign_regions(ob):
@@ -272,7 +274,7 @@ def assign_regions(ob):
 
 
 # side windows: front door glass + rear quarter with the characteristic kink (L, H outlines)
-WIN_FRONT = [(0.80, 0.99), (0.56, 1.115), (0.33, 1.245), (-0.17, 1.30), (-0.17, 0.985)]
+WIN_FRONT = [(0.74, 0.99), (0.52, 1.10), (0.28, 1.22), (-0.17, 1.275), (-0.17, 0.985)]
 WIN_REAR = [(-0.29, 1.295), (-0.80, 1.252), (-1.29, 1.05), (-1.17, 0.995), (-0.29, 0.985)]
 
 
@@ -309,7 +311,9 @@ def side_glass_bm():
         for i, L in enumerate(Ls):
             zg, zt = interp(L)[2], interp(L)[3]
             for j, z in enumerate(zs):
-                if zg - 0.02 <= z <= zt - 0.055:
+                near_window = any(point_in_poly(L + dl, z + dz, poly) for poly in (WIN_FRONT, WIN_REAR)
+                                  for dl in (-0.05, 0, 0.05) for dz in (-0.04, 0, 0.04))
+                if zg - 0.02 <= z <= zt - 0.055 and near_window:
                     grid[(i, j)] = bm.verts.new(V(L, s * (surface_w(L, z) - 0.05), z))
         for (i, j), v in list(grid.items()):
             q = [grid.get(k) for k in ((i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1))]
@@ -365,6 +369,18 @@ def build_cutters():
             merge_bm(bm, cyl_bm(0.088, 0.3, 32, M(-2.47, s * w, 0.80, rx=90), MI['TailLens']))
     # rear diffuser
     merge_bm(bm, box_bm(1.36, 0.6, 0.15, M(-2.55, 0, 0.27), MI['Carbon']))
+    # panel shut lines (6 mm grooves): doors, hood, trunk -> read as real body panels once AO is baked
+    SEAM, sm = 0.006, MI['WellLiner']
+    for s in (1, -1):
+        for L in (0.72, -0.24):                                                       # door front / rear edges
+            merge_bm(bm, box_bm(0.22, SEAM, 0.60, M(L, s * 1.0, 0.64), sm))
+        merge_bm(bm, box_bm(0.22, 0.96, SEAM, M(0.24, s * 1.0, 0.36), sm))            # door bottom edge
+        merge_bm(bm, box_bm(SEAM, 1.2, 0.30, M(1.62, s * 0.80, 0.86), sm))            # hood edges along the fenders
+        merge_bm(bm, box_bm(SEAM, 0.55, 0.20, M(-2.02, s * 0.72, 0.95), sm))          # trunk lid sides
+    merge_bm(bm, box_bm(1.6, SEAM, 0.25, M(1.02, 0, 0.93), sm))                        # hood rear edge (cowl)
+    merge_bm(bm, box_bm(0.9, SEAM, 0.20, M(2.24, 0, 0.72), sm))                        # hood front edge
+    merge_bm(bm, box_bm(1.44, SEAM, 0.20, M(-1.745, 0, 0.98), sm))                     # trunk front edge
+    merge_bm(bm, box_bm(1.44, 0.20, SEAM, M(-2.33, 0, 0.865), sm))                     # trunk rear edge
     ob = new_obj('Cutters', bm, list(MI.keys()))
     return ob
 
@@ -394,7 +410,7 @@ def build_details():
         merge_bm(bm, box_bm(0.24, 0.02, 0.014, M(2.30, s * 0.66, 0.37, rz=s * 22), MI['Chrome']))
         merge_bm(bm, box_bm(0.12, 0.05, 0.025, M(0.74, s * 0.89, 0.975), MI['Trim']))   # mirror stalk
         # door handle
-        merge_bm(bm, box_bm(0.012, 0.16, 0.025, M(-0.12, s * 0.952, 0.92), MI['Chrome']))
+        merge_bm(bm, box_bm(0.012, 0.16, 0.025, M(-0.04, s * 0.952, 0.92), MI['Chrome']))
         for w in (0.46, 0.72):
             ring = bmesh.new()
             bmesh.ops.create_circle(ring, cap_ends=False, segments=32, radius=0.074)
@@ -416,6 +432,13 @@ def build_details():
     for w in (-0.30, -0.10, 0.10, 0.30):
         merge_bm(bm, box_bm(0.012, 0.12, 0.08, M(-2.19, w, 0.27), MI['Carbon']))
     merge_bm(bm, side_glass_bm())
+    # underbody: flat armoured floor, front skid plate and reinforcement rails (visible over jumps)
+    merge_bm(bm, box_bm(1.5, 3.9, 0.02, M(0, 0, 0.215), MI['Underbody']))
+    merge_bm(bm, box_bm(1.3, 0.55, 0.014, M(1.95, 0, 0.235, rx=8), MI['Underbody']))
+    for w in (-0.62, -0.32, 0.32, 0.62):
+        merge_bm(bm, box_bm(0.05, 3.4, 0.035, M(0, w, 0.2), MI['Underbody']))
+    for L in (-1.0, 0.0, 1.0):
+        merge_bm(bm, box_bm(1.3, 0.05, 0.03, M(L, 0, 0.198), MI['Underbody']))
     # grille mesh bars
     for k in range(6):
         z = 0.33 + k * 0.035
@@ -529,13 +552,13 @@ def build_variants():
 R = 0.36
 
 
-def lathe(profile, segs, mat_index):
-    """profile: list of (x_along_axis, radius) -> surface of revolution around X"""
+def lathe(profile, segs, mat_index, rfun=None):
+    """profile: list of (x_along_axis, radius) -> surface of revolution around X (rfun can carve a pattern)"""
     bm = bmesh.new()
     rings = []
     for i in range(segs):
         a = 2 * math.pi * i / segs
-        rings.append([bm.verts.new((x, r * math.cos(a), r * math.sin(a))) for (x, r) in profile])
+        rings.append([bm.verts.new((x, (rfun(i, x, r) if rfun else r) * math.cos(a), (rfun(i, x, r) if rfun else r) * math.sin(a))) for (x, r) in profile])
     n = len(profile)
     for i in range(segs):
         A, B = rings[i], rings[(i + 1) % segs]
@@ -551,7 +574,18 @@ def build_wheel():
     tire = [(-0.135, 0.258), (-0.148, 0.29), (-0.152, 0.325), (-0.145, 0.348), (-0.125, R), (-0.075, R), (-0.068, R - 0.008), (-0.058, R - 0.008),
             (-0.05, R), (-0.008, R), (-0.002, R - 0.008), (0.008, R - 0.008), (0.014, R), (0.05, R), (0.058, R - 0.008), (0.068, R - 0.008), (0.075, R),
             (0.125, R), (0.145, 0.348), (0.152, 0.325), (0.148, 0.29), (0.135, 0.258)]
-    bm = lathe(tire, 56, 0)
+    def tread(i, x, r):   # directional tread: angled shoulder blocks + staggered sipes between the circumferential grooves
+        if r < R - 1e-4:
+            return r
+        ax = abs(x)
+        if ax > 0.078 and (i + int(ax * 70)) % 5 == 0:
+            return r - 0.009
+        if 0.016 < ax < 0.05 and (i + int(ax * 90)) % 7 == 0:
+            return r - 0.006
+        return r
+    # extra samples across the tread face so the pattern has resolution (tread section is x-sorted: indices 4..17)
+    face = sorted(tire[4:18] + [(-0.11, R), (-0.095, R), (-0.03, R), (0.03, R), (0.095, R), (0.11, R)], key=lambda p: p[0])
+    bm = lathe(tire[:4] + face + tire[18:], 96, 0, tread)
     rim = [(-0.13, 0.252), (-0.12, 0.236), (0.10, 0.236), (0.14, 0.246), (0.152, 0.258), (0.16, 0.25), (0.145, 0.232), (0.11, 0.222)]
     merge_bm(bm, lathe(rim, 48, 1))
     # 6 twin spokes, slightly concave towards the hub

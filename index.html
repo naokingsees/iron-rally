@@ -48,6 +48,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#05070b;color:var(--
 .help td{padding:5px 18px;border-bottom:1px solid rgba(255,255,255,.05)}
 .help td:first-child{font-family:'Orbitron';color:var(--cyan);font-weight:700;white-space:nowrap;width:42%}
 kbd{font-family:'Orbitron';font-size:11px}
+/* 狭い画面ではガレージの左右パネルを細くして重ならないようにする */
+@media (max-width: 900px) {
+  #garage .g-left{left:10px;top:10px;bottom:10px;width:calc(50% - 15px)} #garage .g-right{right:10px;top:10px;width:calc(50% - 15px)}
+  #garage .money{font-size:22px} #garage .stats{padding:4px 12px 8px} #garage .stat{margin:6px 0} #garage .card{padding:9px 10px} #garage .c-desc{display:none}
+  #garage .g-actions .btn{font-size:12px;padding:10px 12px}
+}
 /* 狭い・低い画面では、タイトルを上に寄せて操作説明を下にコンパクトに置き、重ならないようにする */
 @media (max-width: 1000px), (max-height: 700px) {
   .title-wrap{top:5vh;transform:none;left:24px}
@@ -120,6 +126,7 @@ kbd{font-family:'Orbitron';font-size:11px}
 .brow .bp{width:16px;font-weight:900;color:var(--dim)}
 .brow .bd{width:10px;height:10px;border-radius:50%}
 .brow .bn{flex:1;font-weight:700}
+.brow .bt{font-style:normal;font-size:9px;color:var(--dim);margin-left:5px;font-family:'Noto Sans JP';font-weight:700}
 .brow .bk{color:var(--orange);font-size:11px}
 .h-bl{position:absolute;left:26px;bottom:24px;width:320px}
 .glabel{display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin:8px 0 4px;letter-spacing:.1em}
@@ -158,6 +165,14 @@ kbd{font-family:'Orbitron';font-size:11px}
 #hCenter .sub{display:block;font-size:20px;color:var(--cyan);margin-top:10px;letter-spacing:.15em}
 #feed{position:absolute;left:50%;top:110px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
 .fmsg{font-family:'Noto Sans JP';font-weight:900;font-size:20px;padding:6px 18px;background:rgba(6,10,18,.6);border-left:3px solid var(--orange);animation:feed 2.6s forwards}
+#lock{position:absolute;left:0;top:0;width:70px;height:70px;margin:-35px 0 0 -35px;display:none;pointer-events:none;
+  background:linear-gradient(var(--orange),var(--orange)) 0 0/16px 2px,linear-gradient(var(--orange),var(--orange)) 0 0/2px 16px,
+  linear-gradient(var(--orange),var(--orange)) 100% 0/16px 2px,linear-gradient(var(--orange),var(--orange)) 100% 0/2px 16px,
+  linear-gradient(var(--orange),var(--orange)) 0 100%/16px 2px,linear-gradient(var(--orange),var(--orange)) 0 100%/2px 16px,
+  linear-gradient(var(--orange),var(--orange)) 100% 100%/16px 2px,linear-gradient(var(--orange),var(--orange)) 100% 100%/2px 16px;
+  background-repeat:no-repeat;transition:width .15s,height .15s,margin .15s}
+#lock span{position:absolute;left:50%;top:100%;transform:translateX(-50%);margin-top:4px;font-size:11px;font-weight:900;letter-spacing:.2em;color:var(--orange);white-space:nowrap}
+#lock.on{width:48px;height:48px;margin:-24px 0 0 -24px;filter:hue-rotate(-25deg) saturate(2);animation:blink .18s infinite alternate}
 #warn{position:absolute;left:50%;top:24%;transform:translateX(-50%);font-family:'Noto Sans JP';font-weight:900;font-size:30px;color:var(--red);text-shadow:0 0 18px rgba(255,59,78,.8);display:none;animation:blink .4s infinite alternate}
 #dmg{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(255,0,0,0) 55%,rgba(255,20,30,.55) 100%);opacity:0;transition:opacity .35s}
 #nitroFx{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 60%,rgba(60,170,255,.22) 100%);opacity:0;transition:opacity .2s}
@@ -280,6 +295,7 @@ kbd{font-family:'Orbitron';font-size:11px}
       <div class="glabel"><span>MISSILE <kbd style="color:var(--dim)">[SHIFT]</kbd></span><span id="hAmmo">3</span></div>
       <div class="missiles" id="hMis"></div>
     </div>
+    <div id="lock"><span></span></div>
     <div id="warn"></div>
     <div id="feed"></div>
     <div id="hCenter"></div>
@@ -329,6 +345,9 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 
 /* =====================================================================
    調整用データ（ここの数値を変えるとバランスや見た目が変わります）
@@ -401,16 +420,16 @@ const COLORS = [
   { name: 'サンセット', hex: 0xff6a12 }, { name: 'ライム', hex: 0x7ed321 }, { name: 'パールホワイト', hex: 0xe8ecef },
 ];
 const RIVALS = [
-  { name: 'VIPER', color: 0x18b35a, skill: 0.93, equip: { body: 'light', armor: 'none', mg: 'mk2', ms: 's', engine: 'lv2' } },
-  { name: 'BLAZE', color: 0xff8c1a, skill: 0.94, equip: { body: 'standard', armor: 'front', mg: 'mk1', ms: 'm', engine: 'lv2' } },
-  { name: 'ONYX', color: 0x1c1d20, skill: 0.97, equip: { body: 'heavy', armor: 'full', mg: 'mk2', ms: 'm', engine: 'lv2' } },
-  { name: 'RAZOR', color: 0xd9d9d9, skill: 0.92, equip: { body: 'standard', armor: 'none', mg: 'mk3', ms: 's', engine: 'lv1' } },
-  { name: 'NOVA', color: 0x8e44ff, skill: 0.95, equip: { body: 'light', armor: 'front', mg: 'mk1', ms: 'l', engine: 'lv2' } },
+  { name: 'VIPER', color: 0x18b35a, skill: 0.93, style: 'speed', equip: { body: 'light', armor: 'none', mg: 'mk2', ms: 's', engine: 'lv2' } },
+  { name: 'BLAZE', color: 0xff8c1a, skill: 0.94, style: 'aggressive', equip: { body: 'standard', armor: 'front', mg: 'mk1', ms: 'm', engine: 'lv2' } },
+  { name: 'ONYX', color: 0x1c1d20, skill: 0.97, style: 'defensive', equip: { body: 'heavy', armor: 'full', mg: 'mk2', ms: 'm', engine: 'lv2' } },
+  { name: 'RAZOR', color: 0xd9d9d9, skill: 0.92, style: 'balanced', equip: { body: 'standard', armor: 'none', mg: 'mk3', ms: 's', engine: 'lv1' } },
+  { name: 'NOVA', color: 0x8e44ff, skill: 0.95, style: 'harasser', equip: { body: 'light', armor: 'front', mg: 'mk1', ms: 'l', engine: 'lv2' } },
 ];
 const QUALITY = {
-  low:  { pr: 1, shadow: 0, bloom: false, particles: 0.5 },
-  mid:  { pr: Math.min(devicePixelRatio, 1.5), shadow: 1024, bloom: true, particles: 0.8 },
-  high: { pr: Math.min(devicePixelRatio, 2), shadow: 2048, bloom: true, particles: 1 },
+  low:  { pr: 1, shadow: 0, bloom: false, particles: 0.5, ao: false, lights: false },
+  mid:  { pr: Math.min(devicePixelRatio, 1.5), shadow: 1024, bloom: true, particles: 0.8, ao: false, lights: true },
+  high: { pr: Math.min(devicePixelRatio, 2), shadow: 2048, bloom: true, particles: 1, ao: true, lights: true },
 };
 
 /* コース：制御点 (x, z)。CatmullRom曲線でなめらかにつなぐ */
@@ -436,6 +455,7 @@ const $ = id => document.getElementById(id);
 function mulberry32(s) { return function () { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const part = (slot, id) => PARTS[slot].items.find(p => p.id === id) || PARTS[slot].items[0];
 const fmtTime = t => { if (t == null) return '--'; const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s < 10 ? '0' : ''}${s.toFixed(2)}`; };
+const _col = new THREE.Color(), SOOT = new THREE.Color(0x141210), _v3 = new THREE.Vector3();
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s1 = new THREE.Vector3(1, 1, 1), _zAxis = new THREE.Vector3(0, 0, 1);
 
 /* ===================== save ===================== */
@@ -591,6 +611,7 @@ class Sound {
     this.loops.add(loop);
     return loop;
   }
+  lockOn() { if (!this.ctx) return; for (let i = 0; i < 2; i++) this.osc(this.master, { type: 'square', f: 1760, dur: 0.06, vol: 0.06, delay: i * 0.09 }); }
   hit(v = 1) { if (!this.ctx) return; this.osc(this.master, { f: 120, fEnd: 50, dur: 0.12, vol: 0.5 * v }); this.burst(this.master, { dur: 0.06, type: 'bandpass', f: 1800, q: 3, vol: 0.4 * v }); }
   scrapeAt(pos, v = 1) {
     if (!this.ctx || this.lis.distanceTo(pos) > 80) return;
@@ -749,13 +770,39 @@ const composerRT = new THREE.WebGLRenderTarget(innerWidth * Q.pr, innerHeight * 
 const composer = new EffectComposer(renderer, composerRT);
 const renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), CONFIG.graphics.bloomStrength, CONFIG.graphics.bloomRadius, CONFIG.graphics.bloomThreshold);
-composer.addPass(renderPass); composer.addPass(bloomPass); composer.addPass(new OutputPass());
+// 接触陰影（GTAO：画面空間のアンビエントオクルージョン）… 高画質のみ
+const gtaoPass = new GTAOPass(new THREE.Scene(), new THREE.PerspectiveCamera(), innerWidth, innerHeight);
+gtaoPass.updateGtaoMaterial({ radius: 0.7, distanceExponent: 1.5, thickness: 1.5, scale: 1.2, samples: 12 });
+gtaoPass.blendIntensity = 0.85; gtaoPass.enabled = false;
+// 仕上げ：色調補正・周辺減光・高速時の放射ブラー・被弾時の色ずれ
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, uSpeed: { value: 0 }, uHit: { value: 0 }, uVig: { value: 0.28 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uSpeed, uHit, uVig; varying vec2 vUv;
+    void main(){
+      vec2 c = vUv - 0.5; float r = length(c);
+      float s = uSpeed * smoothstep(0.18, 0.75, r) * 0.04;
+      vec3 col = vec3(0.0);
+      for (int i = 0; i < 6; i++) { float k = float(i) / 5.0; col += texture2D(tDiffuse, vUv - c * s * k).rgb; }
+      col /= 6.0;
+      if (uHit > 0.001) { vec2 o = c * uHit * 0.014; col.r = texture2D(tDiffuse, vUv + o).r; col.b = texture2D(tDiffuse, vUv - o).b; }
+      col = (col - 0.5) * 1.05 + 0.5;
+      float l = dot(col, vec3(0.299, 0.587, 0.114)); col = mix(vec3(l), col, 1.08);
+      col *= vec3(1.015, 1.0, 0.975);
+      col *= 1.0 - uVig * smoothstep(0.38, 0.9, r);
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }`,
+};
+const gradePass = new ShaderPass(GradeShader);
+composer.addPass(renderPass); composer.addPass(gtaoPass); composer.addPass(bloomPass); composer.addPass(new OutputPass()); composer.addPass(gradePass);
 const pmrem = new THREE.PMREMGenerator(renderer);
 const shadowLights = [];
 
 function renderScene(scene, camera) {
   // ガレージはスポットライトの映り込みが強いので、光のにじみが出る明るさを上げる
   bloomPass.threshold = scene === garage.scene ? 1.8 : CONFIG.graphics.bloomThreshold;
+  gtaoPass.enabled = !!Q.ao && scene !== garage.scene; gtaoPass.scene = scene; gtaoPass.camera = camera;
+  if (scene === garage.scene) { gradePass.uniforms.uSpeed.value = 0; gradePass.uniforms.uHit.value = 0; }
   if (Q.bloom) { renderPass.scene = scene; renderPass.camera = camera; composer.render(); }
   else renderer.render(scene, camera);
 }
@@ -775,10 +822,27 @@ function noisePixels(g, w, h, amt) {
   g.putImageData(img, 0, 0);
 }
 const TEX = {};
+function canvasEl(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); return c; }
+// 明るさを高さとみなしてノーマルマップを作る（タイル状に繋がるよう端は折り返し）
+function normalFromCanvas(src, strength = 2, repeat = null) {
+  const w = src.width, h = src.height, sd = src.getContext('2d').getImageData(0, 0, w, h).data;
+  const out = canvasEl(w, h, () => {}), g = out.getContext('2d'), img = g.createImageData(w, h), d = img.data;
+  const H = (x, y) => { x = (x + w) % w; y = (y + h) % h; const i = (y * w + x) * 4; return (sd[i] + sd[i + 1] + sd[i + 2]) / 765; };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = (H(x + 1, y) - H(x - 1, y)) * strength, dy = (H(x, y + 1) - H(x, y - 1)) * strength, l = Math.hypot(dx, dy, 1), i = (y * w + x) * 4;
+    d[i] = (-dx / l * 0.5 + 0.5) * 255; d[i + 1] = (dy / l * 0.5 + 0.5) * 255; d[i + 2] = (1 / l * 0.5 + 0.5) * 255; d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(out); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = MAX_ANISO;
+  if (repeat) t.repeat.set(repeat, repeat);
+  return t;
+}
 function initTextures() {
-  TEX.road = canvasTex(512, 512, (g, w, h) => {
+  const TS = save.quality === 'high' ? 2 : save.quality === 'low' ? 0.5 : 1;   // 画質でテクスチャ解像度を切り替える
+  TEX.road = canvasTex(512 * TS, 512 * TS, (g, w, h) => {
     g.fillStyle = '#2d2f34'; g.fillRect(0, 0, w, h);
     noisePixels(g, w, h, 26);
+    for (let i = 0; i < 2600 * TS * TS; i++) { const c = rand(55, 110); g.fillStyle = `rgba(${c},${c},${c + 4},0.55)`; g.fillRect(rand(0, w), rand(0, h), rand(1, 2.5) * TS, rand(1, 2.5) * TS); }   // 骨材の粒
     g.fillStyle = 'rgba(0,0,0,0.16)'; g.fillRect(w * 0.2, 0, w * 0.12, h); g.fillRect(w * 0.68, 0, w * 0.12, h);
     for (let i = 0; i < 40; i++) { g.strokeStyle = `rgba(0,0,0,${rand(0.05, 0.18)})`; g.lineWidth = rand(1, 2); g.beginPath(); let x = rand(0, w), y = rand(0, h); g.moveTo(x, y); for (let k = 0; k < 5; k++) { x += rand(-14, 14); y += rand(-14, 14); g.lineTo(x, y); } g.stroke(); }
     g.fillStyle = '#ebe6dc'; g.fillRect(w * 0.028, 0, w * 0.02, h); g.fillRect(w * 0.952, 0, w * 0.02, h);
@@ -812,6 +876,49 @@ function initTextures() {
     noisePixels(g, w, h, 20);
   });
   TEX.hazard.repeat.set(0.15, 0.15);
+  // ---- 凹凸と光沢の差（ノーマルマップ／ラフネスマップ）
+  TEX.roadN = normalFromCanvas(TEX.road.image, 2.5);
+  TEX.roadR = canvasTex(256, 256, (g, w, h) => {   // タイヤが通る帯は磨かれて少しつるつる
+    g.fillStyle = '#d0d0d0'; g.fillRect(0, 0, w, h); noisePixels(g, w, h, 50);
+    g.fillStyle = 'rgba(40,40,40,0.45)'; g.fillRect(w * 0.2, 0, w * 0.12, h); g.fillRect(w * 0.68, 0, w * 0.12, h);
+  }, false);
+  TEX.gravelN = normalFromCanvas(TEX.gravel.image, 5);
+  TEX.sandN = normalFromCanvas(canvasEl(512 * TS, 512 * TS, (g, w, h) => {   // 風紋
+    g.fillStyle = '#808080'; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 2) { const v = 128 + Math.sin(y / h * Math.PI * 2 * 9 + Math.sin(y * 0.05) * 1.5) * 26; g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(0, y, w, 2); }
+    noisePixels(g, w, h, 40);
+  }), 2.2, 200);
+  TEX.rockN = normalFromCanvas(canvasEl(512 * TS, 512 * TS, (g, w, h) => {   // 岩肌：割れ目と層
+    g.fillStyle = '#808080'; g.fillRect(0, 0, w, h); noisePixels(g, w, h, 70);
+    for (let i = 0; i < 70; i++) { g.strokeStyle = `rgba(20,20,20,${rand(0.3, 0.7)})`; g.lineWidth = rand(1, 3) * TS; g.beginPath(); let x = rand(0, w), y = rand(0, h); g.moveTo(x, y); for (let k = 0; k < 7; k++) { x += rand(-30, 30) * TS; y += rand(-12, 12) * TS; g.lineTo(x, y); } g.stroke(); }
+    for (let i = 0; i < 300; i++) { const c = rand(90, 200); g.fillStyle = `rgba(${c},${c},${c},0.5)`; g.beginPath(); g.arc(rand(0, w), rand(0, h), rand(2, 9) * TS, 0, 7); g.fill(); }
+  }), 4);
+  // 装甲板：ガンメタの地に傷・汚れ・角の塗装はげ（RoundedBox の各面の縁が UV の縁になる）
+  const armorCanvas = canvasEl(512 * TS, 512 * TS, (g, w, h) => {
+    g.fillStyle = '#50565e'; g.fillRect(0, 0, w, h); noisePixels(g, w, h, 16);
+    for (let i = 0; i < 26; i++) { g.fillStyle = `rgba(20,18,16,${rand(0.05, 0.14)})`; g.beginPath(); g.arc(rand(0, w), rand(0, h), rand(20, 90) * TS, 0, 7); g.fill(); }
+    for (let i = 0; i < 160; i++) { g.strokeStyle = `rgba(205,210,215,${rand(0.15, 0.45)})`; g.lineWidth = rand(0.6, 1.6) * TS; g.beginPath(); const x = rand(0, w), y = rand(0, h), a = rand(-0.6, 0.6), l = rand(8, 60) * TS; g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+    for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(120,70,40,${rand(0.15, 0.3)})`; g.beginPath(); g.arc(rand(0, w), rand(0, h), rand(1, 4) * TS, 0, 7); g.fill(); }
+    const e = w * 0.045; g.strokeStyle = 'rgba(175,180,186,0.55)'; g.lineWidth = e; g.strokeRect(e / 2, e / 2, w - e, h - e);
+    noisePixels(g, w, h, 10);
+  });
+  TEX.armor = new THREE.CanvasTexture(armorCanvas); TEX.armor.colorSpace = THREE.SRGBColorSpace; TEX.armor.anisotropy = MAX_ANISO;
+  TEX.armorN = normalFromCanvas(armorCanvas, 3);
+  TEX.flash = canvasTex(128, 128, (g, w, h) => {   // マズルフラッシュ（放射状の閃光）
+    const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, 'rgba(255,255,240,1)'); gr.addColorStop(0.25, 'rgba(255,200,90,0.8)'); gr.addColorStop(1, 'rgba(255,120,20,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.globalCompositeOperation = 'lighter'; g.strokeStyle = 'rgba(255,220,150,0.7)';
+    for (let i = 0; i < 9; i++) { const a = rand(0, Math.PI * 2), l = rand(0.25, 0.5) * w; g.lineWidth = rand(2, 5); g.beginPath(); g.moveTo(w / 2, h / 2); g.lineTo(w / 2 + Math.cos(a) * l, h / 2 + Math.sin(a) * l); g.stroke(); }
+  });
+  TEX.flash.wrapS = TEX.flash.wrapT = THREE.ClampToEdgeWrapping;
+  TEX.hole = canvasTex(64, 64, (g, w, h) => {      // 弾痕（焦げ＋めくれた金属の縁）
+    const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(0.22, 'rgba(10,10,10,1)'); gr.addColorStop(0.32, 'rgba(170,165,160,0.9)');
+    gr.addColorStop(0.45, 'rgba(40,35,30,0.7)'); gr.addColorStop(1, 'rgba(20,15,10,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  });
+  TEX.hole.wrapS = TEX.hole.wrapT = THREE.ClampToEdgeWrapping;
 }
 function bannerTex(text, sub, c1, c2) {
   return canvasTex(1024, 256, (g, w, h) => {
@@ -828,6 +935,8 @@ function bannerTex(text, sub, c1, c2) {
 const GEO = new Map();
 const geo = (key, fn) => { let g = GEO.get(key); if (!g) { g = fn(); GEO.set(key, g); } return g; };
 const box = (w, h, d) => geo(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d));
+const rbox = (w, h, d, r = 0.015) => geo(`rb${w},${h},${d},${r}`, () => new RoundedBoxGeometry(w, h, d, 2, r));
+const boltGeo = () => geo('bolt', () => new THREE.CylinderGeometry(0.014, 0.014, 0.012, 6));
 const cyl = (rt, rb, h, s = 12, rx = false, rz = false) => geo(`c${rt},${rb},${h},${s},${rx},${rz}`, () => { const g = new THREE.CylinderGeometry(rt, rb, h, s); if (rx) g.rotateX(Math.PI / 2); if (rz) g.rotateZ(Math.PI / 2); return g; });
 const M = {};
 function initMaterials() {
@@ -838,7 +947,7 @@ function initMaterials() {
   M.chrome = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 1, roughness: 0.12 });
   M.dark = new THREE.MeshStandardMaterial({ color: 0x181b20, metalness: 0.5, roughness: 0.5 });
   M.carbon = new THREE.MeshStandardMaterial({ color: 0x0d0f12, metalness: 0.4, roughness: 0.32 });
-  M.armor = new THREE.MeshStandardMaterial({ color: 0x51575f, metalness: 0.85, roughness: 0.36 });
+  M.armor = new THREE.MeshStandardMaterial({ color: 0xffffff, map: TEX.armor, normalMap: TEX.armorN, normalScale: new THREE.Vector2(0.6, 0.6), metalness: 0.8, roughness: 0.44 });
   M.gun = new THREE.MeshStandardMaterial({ color: 0x2a2e34, metalness: 0.9, roughness: 0.3 });
   M.glass = new THREE.MeshPhysicalMaterial({ color: 0x0b1118, metalness: 0.3, roughness: 0.2, clearcoat: 0.6, clearcoatRoughness: 0.18 });
   M.head = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff0d8, emissiveIntensity: 3.5 });
@@ -849,6 +958,10 @@ function initMaterials() {
   M.missile = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, metalness: 0.6, roughness: 0.3 });
   M.glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(7, 3, 0.8) });
   M.tracer = new THREE.MeshBasicMaterial({ color: new THREE.Color(7, 4.2, 1.4) });
+  M.bolt = new THREE.MeshStandardMaterial({ color: 0x9a9ea4, metalness: 1, roughness: 0.32 });
+  M.grilleDark = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.9 });
+  M.flashFx = new THREE.MeshBasicMaterial({ map: TEX.flash, color: new THREE.Color(2.6, 1.8, 0.9), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  M.hole = new THREE.MeshStandardMaterial({ map: TEX.hole, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, roughness: 0.6, metalness: 0.4 });
 }
 
 /* ===================== car model ===================== */
@@ -947,6 +1060,7 @@ const CAR_MATS = {};
 function carMat(name, hasAO, per) {
   if (name === 'Paint') return hasAO ? per.paintAO : per.paint;
   if (name === 'TailLED') return per.tail;
+  if (name === 'HeadLED' && per.head) return per.head;
   const key = name + (hasAO ? ':ao' : '');
   if (!CAR_MATS[key]) {
     const m = (CAR_MAT_DEFS[name] || (() => new THREE.MeshStandardMaterial({ color: 0x222222 })))();
@@ -975,12 +1089,15 @@ function addLodPart(parent, hi, lo, per, receive, dist) {
   return lod;
 }
 function buildGlbBody(body, eq, per) {
-  addLodPart(body, CAR.body, CAR.bodyLod, per, true, 24);
+  const lod = addLodPart(body, CAR.body, CAR.bodyLod, per, true, 24);
+  per.hitMesh = lod.isLOD ? lod.levels[lod.levels.length - 1].object : lod;   // 弾痕を付ける当たり判定用（軽いモデル）
   const want = eq.body === 'light' ? ['Wing_GT', 'Aero_GT'] : eq.body === 'heavy' ? ['BullBar', 'LightBar'] : ['Wing_Std'];
-  for (const n of want) if (CAR.parts[n]) addCarPart(body, CAR.parts[n], per);
+  let detachable = null;   // 大ダメージで脱落する部品（ウイング/ブルバー）
+  for (const n of want) if (CAR.parts[n]) { const o = addCarPart(body, CAR.parts[n], per); if (!detachable) detachable = o; }
   for (const x of [0.47, 0.63, -0.47, -0.63]) {
     const f = new THREE.Mesh(flameGeo(), per.flameMat); f.position.set(x, 0.29, -2.85); f.visible = false; body.add(f); per.flames.push(f);
   }
+  return detachable;
 }
 function addGlbWheels(root, wheels, per) {
   for (const [x, z, front] of [[0.83, 1.39, true], [-0.83, 1.39, true], [0.83, -1.39, false], [-0.83, -1.39, false]]) {
@@ -992,15 +1109,27 @@ function addGlbWheels(root, wheels, per) {
   }
 }
 
+// メタリック塗装の微細なフレーク：クリアコートの下の面の向きだけを細かく乱して、角度で粒がきらめくようにする
+function addFlakes(mat) {
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vFlakePos;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvFlakePos = position;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vFlakePos;\nfloat flakeHash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n{ vec3 fc = floor(vFlakePos * 420.0); vec3 rnd = vec3(flakeHash(fc), flakeHash(fc + 17.1), flakeHash(fc + 41.7)) - 0.5; normal = normalize(normal + rnd * 0.16); }');
+  };
+  mat.customProgramCacheKey = () => 'flake' + (mat.vertexColors ? 'v' : '');
+}
 function buildCarModel(eq, colorHex) {
   const root = new THREE.Group(), body = new THREE.Group(); root.add(body);
-  const paint = new THREE.MeshPhysicalMaterial({ color: colorHex, metalness: 0.6, roughness: 0.36, clearcoat: 1, clearcoatRoughness: 0.03 });
+  const paint = new THREE.MeshPhysicalMaterial({ color: colorHex, metalness: 0.62, roughness: 0.24, clearcoat: 1, clearcoatRoughness: 0.04 });
   const paintAO = paint.clone(); paintAO.vertexColors = true;
+  addFlakes(paint); addFlakes(paintAO);
   const tail = new THREE.MeshStandardMaterial({ color: 0x300000, emissive: 0xff1a1a, emissiveIntensity: 2.2 });
   const flameMat = M.flame.clone();
   const add =(g, m, x, y, z, rx = 0, ry = 0, rz = 0, parent = body) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = true; parent.add(o); return o; };
   const flames = [];
-  if (CAR) buildGlbBody(body, eq, { paint, paintAO, tail, flameMat, flames });
+  const head = CAR ? new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xeef4ff, emissiveIntensity: 4.5 }) : M.head;
+  let detachable = null, hitMesh = null;
+  if (CAR) { const per = { paint, paintAO, tail, head, flameMat, flames }; detachable = buildGlbBody(body, eq, per); hitMesh = per.hitMesh; }
   else {
   // ---- ボディ・キャビン・ガラス（glbが無いときの簡易モデル）
   add(bodyGeo(), paint, 0, 0, 0);
@@ -1058,59 +1187,102 @@ function buildCarModel(eq, colorHex) {
     for (const x of [-0.36, -0.12, 0.12, 0.36]) add(box(0.17, 0.07, 0.04), M.amber, x, 1.36, 0.22);
   }
   }
-  // ---- 装甲
+  // ---- 装甲：厚みのある角丸の装甲板＋六角ボルト＋継ぎ目（分割）＋補強フレーム
+  const plate = (w, h, d, x, y, z, rx, ry, rz, bolts, face, parent = body) => {
+    const pm = add(rbox(w, h, d, Math.min(0.012, Math.min(w, h, d) * 0.4)), M.armor, x, y, z, rx, ry, rz, parent);
+    pm.receiveShadow = true;
+    for (const [u, v] of bolts || []) {
+      let b;
+      if (face === 'z+' || face === 'z-') b = add(boltGeo(), M.bolt, u, v, (face === 'z+' ? 1 : -1) * (d / 2 + 0.004), Math.PI / 2, 0, 0, pm);
+      else if (face === 'y+') b = add(boltGeo(), M.bolt, u, h / 2 + 0.004, v, 0, 0, 0, pm);
+      else b = add(boltGeo(), M.bolt, (face === 'x+' ? 1 : -1) * (w / 2 + 0.004), u, v, 0, 0, Math.PI / 2, pm);
+      b.castShadow = false;
+    }
+    return pm;
+  };
   if (eq.armor !== 'none') {
-    add(box(1.9, 0.36, 0.08), M.armor, 0, 0.5, 2.47, -0.3);
-    add(box(1.2, 0.04, 0.9), M.armor, 0, CAR ? 0.9 : 0.93, 1.5, 0.14);
-    if (CAR) for (const x of [-0.4, 0, 0.4]) add(box(0.04, 0.04, 0.72), M.armor, x, 1.17, 0.6, 0.5);
-    else for (const x of [-0.4, 0, 0.4]) add(box(0.04, 0.04, 0.95), M.armor, x, 1.15, 0.53, 0.435);
+    const z0 = CAR ? 2.48 : 2.5;
+    plate(1.84, 0.3, 0.05, 0, 0.48, z0, -0.3, 0, 0, [[-0.8, 0.09], [-0.27, 0.09], [0.27, 0.09], [0.8, 0.09], [-0.8, -0.09], [0.8, -0.09]], 'z+');
+    for (const x of [-0.6, 0.6]) add(cyl(0.028, 0.028, 0.3, 10, true), M.dark, x, 0.42, z0 - 0.17);      // 補強ステー
+    for (const s of [-1, 1]) plate(0.56, 0.025, 0.86, s * 0.295, CAR ? 0.905 : 0.94, 1.5, 0.14, 0, 0, [[-0.22, -0.36], [0.22, -0.36], [-0.22, 0.36], [0.22, 0.36]], 'y+');
+    const wg = new THREE.Group(); wg.position.set(0, CAR ? 1.17 : 1.15, CAR ? 0.6 : 0.53); wg.rotation.x = CAR ? 0.5 : 0.435; body.add(wg);
+    for (const x of [-0.42, -0.14, 0.14, 0.42]) add(cyl(0.014, 0.014, 0.74, 8, true), M.dark, x, 0.035, 0, 0, 0, 0, wg);   // フロントガラスのガード
+    for (const z of [-0.25, 0.12]) add(cyl(0.014, 0.014, 0.9, 8, false, true), M.dark, 0, 0.035, z, 0, 0, 0, wg);
   }
   if (eq.armor === 'full') {
-    for (const x of [1.0, -1.0]) add(box(0.1, 0.34, 2.9), M.armor, x, 0.55, 0);
-    for (const x of CAR ? [0.82, -0.82] : [0.74, -0.74]) for (const z of [-0.75, -0.3, 0.15]) add(box(0.035, 0.26, 0.035), M.armor, x, 1.11, z);
-    add(box(1.9, 0.3, 0.08), M.armor, 0, 0.6, -2.46, 0.25);
+    for (const s of [-1, 1]) {
+      for (const [zc, len] of [[-0.95, 0.8], [-0.1, 0.84], [0.66, 0.6]])        // 継ぎ目のある3分割のサイド装甲
+        plate(0.05, 0.32, len, s * 1.0, 0.52, zc, 0, 0, 0, [[0.1, -len / 2 + 0.06], [0.1, len / 2 - 0.06], [-0.1, -len / 2 + 0.06], [-0.1, len / 2 - 0.06]], s > 0 ? 'x+' : 'x-');
+      for (const z of [-0.75, -0.3, 0.15]) add(cyl(0.016, 0.016, 0.28, 8), M.dark, s * (CAR ? 0.8 : 0.76), 1.11, z, 0, 0, s * 0.5);   // 窓の保護バー
+    }
+    plate(1.84, 0.28, 0.05, 0, 0.58, CAR ? -2.44 : -2.47, 0.25, 0, 0, [[-0.8, 0.08], [0.8, 0.08], [-0.8, -0.08], [0.8, -0.08]], 'z-');
   }
-  // ---- machine gun
+  // ---- マシンガン：旋回リング＋支持架台（ヨーク）＋装甲カバー＋防盾。発射時は機関部が反動で後退する
   const mgG = new THREE.Group(); mgG.position.set(0, 1.33, -0.35); body.add(mgG);
-  add(cyl(0.24, 0.3, 0.12, 16), M.dark, 0, 0.06, 0, 0, 0, 0, mgG);
-  add(box(0.34, 0.26, 0.62), M.gun, 0, 0.25, 0.02, 0, 0, 0, mgG);
+  add(cyl(0.26, 0.3, 0.07, 24), M.dark, 0, 0.035, 0, 0, 0, 0, mgG);
+  add(geo('mgRing', () => new THREE.TorusGeometry(0.27, 0.012, 6, 32).rotateX(Math.PI / 2)), M.bolt, 0, 0.07, 0, 0, 0, 0, mgG);
+  for (const x of [-0.19, 0.19]) add(rbox(0.05, 0.24, 0.22, 0.012), M.armor, x, 0.17, -0.02, 0, 0, 0, mgG);
+  add(cyl(0.03, 0.03, 0.44, 10, false, true), M.bolt, 0, 0.24, -0.02, 0, 0, 0, mgG);
+  const gun = new THREE.Group(); mgG.add(gun);
+  const barrelMat = M.gun.clone(); barrelMat.emissive = new THREE.Color(1, 0.32, 0.06); barrelMat.emissiveIntensity = 0;   // 撃ち続けると銃身が赤熱する
+  add(rbox(0.28, 0.19, 0.56, 0.02), M.gun, 0, 0.25, 0.02, 0, 0, 0, gun);
+  add(rbox(0.36, 0.08, 0.5, 0.025), M.armor, 0, 0.375, 0.04, 0, 0, 0, gun);
+  add(rbox(0.4, 0.2, 0.03, 0.01), M.armor, 0, 0.26, 0.31, 0, 0, 0, gun);
   let spin = null, muzzleZ;
   if (eq.mg === 'mk3') {
-    spin = new THREE.Group(); spin.position.set(0, 0.26, 0.35); mgG.add(spin);
-    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; add(cyl(0.028, 0.028, 1.0, 6, true), M.gun, Math.cos(a) * 0.075, Math.sin(a) * 0.075, 0.5, 0, 0, 0, spin); }
-    add(cyl(0.13, 0.13, 0.08, 12, true), M.dark, 0, 0, 0.85, 0, 0, 0, spin);
-    add(cyl(0.13, 0.13, 0.08, 12, true), M.dark, 0, 0, 0.2, 0, 0, 0, spin);
-    add(cyl(0.16, 0.16, 0.3, 14, false, true), M.dark, 0.3, 0.24, -0.05, 0, 0, 0, mgG);
+    spin = new THREE.Group(); spin.position.set(0, 0.25, 0.36); gun.add(spin);
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; add(cyl(0.024, 0.024, 1.0, 8, true), barrelMat, Math.cos(a) * 0.07, Math.sin(a) * 0.07, 0.5, 0, 0, 0, spin); }
+    for (const z of [0.2, 0.55, 0.88]) add(cyl(0.11, 0.11, 0.05, 16, true), M.dark, 0, 0, z, 0, 0, 0, spin);
+    add(cyl(0.1, 0.1, 0.16, 16, true), M.dark, 0, 0.25, 0.26, 0, 0, 0, gun);                       // モーター
+    add(cyl(0.16, 0.16, 0.3, 18, false, true), M.dark, 0.31, 0.22, -0.05, 0, 0, 0, gun);            // ドラムマガジン
+    add(rbox(0.1, 0.05, 0.22, 0.01), M.dark, 0.2, 0.3, -0.02, 0, 0, 0, gun);                       // 給弾シュート
     muzzleZ = 1.45;
   } else {
-    const len = eq.mg === 'mk2' ? 1.05 : 0.85;
-    for (const x of [-0.08, 0.08]) {
-      add(cyl(0.035, 0.035, len, 8, true), M.gun, x, 0.27, 0.33 + len / 2, 0, 0, 0, mgG);
-      if (eq.mg === 'mk2') add(cyl(0.055, 0.055, 0.14, 8, true), M.dark, x, 0.27, 0.33 + len, 0, 0, 0, mgG);
+    const len = eq.mg === 'mk2' ? 1.08 : 0.9;
+    for (const x of [-0.075, 0.075]) {
+      add(cyl(0.026, 0.026, len, 10, true), barrelMat, x, 0.25, 0.33 + len / 2, 0, 0, 0, gun);
+      add(cyl(0.042, 0.042, len * 0.45, 12, true), M.gun, x, 0.25, 0.33 + len * 0.25, 0, 0, 0, gun);   // 冷却ジャケット
+      for (let k = 0; k < 4; k++) add(geo('mgRib', () => new THREE.TorusGeometry(0.043, 0.006, 6, 14)), M.dark, x, 0.25, 0.36 + k * len * 0.1, 0, 0, 0, gun);
+      add(cyl(eq.mg === 'mk2' ? 0.05 : 0.038, eq.mg === 'mk2' ? 0.05 : 0.038, eq.mg === 'mk2' ? 0.11 : 0.07, 10, true), M.dark, x, 0.25, 0.33 + len, 0, 0, 0, gun);   // マズルブレーキ
     }
-    if (eq.mg === 'mk2') add(box(0.18, 0.22, 0.34), M.dark, 0.27, 0.22, 0, 0, 0, 0, mgG);
-    muzzleZ = 0.33 + len + 0.1;
+    if (eq.mg === 'mk2') { add(rbox(0.15, 0.18, 0.3, 0.015), M.dark, 0.27, 0.22, -0.02, 0, 0, 0, gun); add(rbox(0.08, 0.04, 0.16, 0.01), M.dark, 0.18, 0.31, 0.02, 0, 0, 0, gun); }
+    muzzleZ = 0.33 + len + 0.12;
   }
-  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.27, muzzleZ); mgG.add(muzzle);
-  // ---- missile pods
-  const tipCount = eq.ms === 's' ? 2 : eq.ms === 'm' ? 3 : 4;
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.25, muzzleZ); gun.add(muzzle);
+  const flash = new THREE.Group(); flash.position.copy(muzzle.position); flash.visible = false; gun.add(flash);   // マズルフラッシュ
+  for (const r of [0, Math.PI / 2]) { const fp = new THREE.Mesh(geo('flashP', () => new THREE.PlaneGeometry(0.34, 0.9).translate(0, 0.4, 0).rotateX(Math.PI / 2)), M.flashFx); fp.rotation.z = r; flash.add(fp); }
+  { const ff = new THREE.Mesh(geo('flashF', () => new THREE.PlaneGeometry(0.42, 0.42)), M.flashFx); flash.add(ff); }
+  // ---- ミサイルポッド：装甲シェル＋発射管＋開閉する前面カバー＋後部の排気口。残弾が発射管の弾頭に表示される
+  const msPart = part('ms', eq.ms), tubes = Math.ceil(msPart.ammo / 2);
   const podLen = eq.ms === 's' ? 0.72 : eq.ms === 'm' ? 0.82 : 0.95;
-  const slots = { 2: [[-0.07, 0], [0.07, 0]], 3: [[-0.07, 0.05], [0.07, 0.05], [0, -0.06]], 4: [[-0.07, 0.05], [0.07, 0.05], [-0.07, -0.06], [0.07, -0.06]] }[tipCount];
-  const pods = [];
-  for (const sx of [-0.5, 0.5]) {
-    const pg = new THREE.Group(); pg.position.set(sx * 0.9, 1.47, -0.55); body.add(pg);
-    add(box(0.3, 0.26, podLen), M.dark, 0, 0, 0, 0, 0, 0, pg);
-    add(box(0.32, 0.04, podLen * 0.9), paint, 0, 0.14, 0, 0, 0, 0, pg);
-    for (const [x, y] of slots) add(tipGeo(), M.tip, x, y, podLen / 2 + 0.07, 0, 0, 0, pg);
-    const launch = new THREE.Object3D(); launch.position.set(0, 0, podLen / 2 + 0.3); pg.add(launch); pods.push(launch);
-  }
+  const slots = tubes === 2 ? [[-0.065, 0], [0.065, 0]] : [[-0.065, 0.05], [0.065, 0.05], [0, -0.06]];
+  const pods = [], podKick = [], covers = [], tipsByPod = [[], []];
+  [-1, 1].forEach((sx, pi) => {
+    const pg = new THREE.Group(); pg.position.set(sx * 0.45, 1.47, -0.55); body.add(pg);
+    const pr = new THREE.Group(); pg.add(pr); podKick.push(pr);
+    add(rbox(0.3, 0.26, podLen, 0.025), M.armor, 0, 0, 0, 0, 0, 0, pr);
+    add(rbox(0.31, 0.03, podLen * 0.85, 0.01), paint, 0, 0.135, 0, 0, 0, 0, pr);
+    add(rbox(0.28, 0.24, 0.03, 0.01), M.dark, 0, 0, podLen / 2 + 0.005, 0, 0, 0, pr);
+    add(rbox(0.22, 0.14, 0.04, 0.01), M.dark, 0, 0, -podLen / 2 - 0.01, 0, 0, 0, pr);
+    for (const [x, y] of slots) {
+      add(geo('tubeRing', () => new THREE.TorusGeometry(0.056, 0.01, 8, 20)), M.bolt, x, y, podLen / 2 + 0.024, 0, 0, 0, pr);
+      add(cyl(0.05, 0.05, 0.012, 16, true), M.grilleDark, x, y, podLen / 2 + 0.02, 0, 0, 0, pr);
+      tipsByPod[pi].push(add(tipGeo(), M.tip, x, y, podLen / 2 + 0.035, 0, 0, 0, pr));
+    }
+    for (const [x, y] of [[-0.12, 0.1], [0.12, 0.1], [-0.12, -0.1], [0.12, -0.1]]) { const b = add(boltGeo(), M.bolt, x, y, podLen / 2 + 0.024, Math.PI / 2, 0, 0, pr); b.castShadow = false; }
+    const cv = new THREE.Group(); cv.position.set(0, 0.125, podLen / 2 + 0.06); pr.add(cv); covers.push(cv);
+    add(rbox(0.29, 0.25, 0.016, 0.006), M.armor, 0, -0.125, 0, 0, 0, 0, cv);
+    const launch = new THREE.Object3D(); launch.position.set(0, 0, podLen / 2 + 0.3); pr.add(launch); pods.push(launch);
+  });
+  const tipsOrder = []; for (let k = 0; k < tubes; k++) for (const p of [0, 1]) tipsOrder.push(tipsByPod[p][k]);   // 発射順（左右交互）
+  tipsOrder.forEach((t, i) => { t.visible = i < msPart.ammo; });
   const smoke = new THREE.Object3D(); smoke.position.set(0, 0.95, 1.7); body.add(smoke);
   // ---- wheels（20インチ風・ガンメタの多本スポーク）
   const tire = geo('tire', () => { const g = new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.3, 32); g.rotateZ(Math.PI / 2); return g; });
   const rimG = geo('rim', () => { const g = new THREE.CylinderGeometry(0.255, 0.255, 0.31, 24); g.rotateZ(Math.PI / 2); return g; });
   const hubG = geo('hub', () => { const g = new THREE.CylinderGeometry(0.06, 0.06, 0.33, 10); g.rotateZ(Math.PI / 2); return g; });
   const wheels = [];
-  if (CAR) addGlbWheels(root, wheels, { paint, paintAO, tail });
+  if (CAR) addGlbWheels(root, wheels, { paint, paintAO, tail, head });
   else for (const [x, z, front] of [[0.83, 1.39, true], [-0.83, 1.39, true], [0.83, -1.39, false], [-0.83, -1.39, false]]) {
     const pivot = new THREE.Group(); pivot.position.set(x, WHEEL_R, z); root.add(pivot);
     const sp = new THREE.Group(); pivot.add(sp);
@@ -1122,10 +1294,11 @@ function buildCarModel(eq, colorHex) {
   }
   const sc = eq.body === 'light' ? [0.96, 0.93, 0.97] : eq.body === 'heavy' ? [1.07, 1.1, 1.05] : [1, 1, 1];
   root.scale.set(sc[0], sc[1], sc[2]);
-  return { root, body, wheels, muzzle, pods, flames, flameMat, paint, paintAO, tail, spin, smoke,
-    setColor(hex) { paint.color.setHex(hex); paintAO.color.setHex(hex); } };
+  return { root, body, wheels, muzzle, pods, flames, flameMat, paint, paintAO, tail, head, spin, smoke, gun, barrelMat, flash, podKick, covers, tipsOrder,
+    detachable, hitMesh, baseColor: new THREE.Color(colorHex),
+    setColor(hex) { paint.color.setHex(hex); paintAO.color.setHex(hex); this.baseColor.setHex(hex); } };
 }
-function disposeModel(m) { m.paint.dispose(); m.paintAO.dispose(); m.tail.dispose(); m.flameMat.dispose(); m.root.removeFromParent(); }
+function disposeModel(m) { for (const k of ['paint', 'paintAO', 'tail', 'head', 'flameMat', 'barrelMat']) if (m[k] && m[k] !== M.head) m[k].dispose(); m.root.removeFromParent(); }
 
 /* ===================== particles ===================== */
 const P_VS = `attribute float aSize; attribute float aAlpha; attribute vec3 aColor; uniform float uScale;
@@ -1380,17 +1553,17 @@ function buildWorld() {
     gc[i * 3] = s * (1 + hr * 0.05); gc[i * 3 + 1] = s * (0.97 - hr * 0.2); gc[i * 3 + 2] = s * (0.93 - hr * 0.3);
   }
   gGeo.setAttribute('color', new THREE.BufferAttribute(gc, 3)); gGeo.computeVertexNormals();
-  const ground = new THREE.Mesh(gGeo, new THREE.MeshStandardMaterial({ map: TEX.sand, vertexColors: true, roughness: 1 }));
+  const ground = new THREE.Mesh(gGeo, new THREE.MeshStandardMaterial({ map: TEX.sand, normalMap: TEX.sandN, normalScale: new THREE.Vector2(0.5, 0.5), vertexColors: true, roughness: 1 }));
   ground.receiveShadow = true; scene.add(ground);
 
   // road / curbs / gravel / rails
-  const roadMat = new THREE.MeshStandardMaterial({ map: TEX.road, roughness: 0.82, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const roadMat = new THREE.MeshStandardMaterial({ map: TEX.road, normalMap: TEX.roadN, normalScale: new THREE.Vector2(0.45, 0.45), roughnessMap: TEX.roadR, roughness: 0.95, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const road = new THREE.Mesh(track.ribbon(-HALF_W, HALF_W, 0.02, 0.02, 24), roadMat); road.receiveShadow = true; scene.add(road);
   const curbMat = new THREE.MeshStandardMaterial({ map: TEX.curb, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   for (const [a, b, ya, yb] of [[-HALF_W - 1.4, -HALF_W, 0.03, 0.09], [HALF_W, HALF_W + 1.4, 0.09, 0.03]]) {
     const m = new THREE.Mesh(track.ribbon(a, b, ya, yb, 4), curbMat); m.receiveShadow = true; scene.add(m);
   }
-  const gravelMat = new THREE.MeshStandardMaterial({ map: TEX.gravel, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const gravelMat = new THREE.MeshStandardMaterial({ map: TEX.gravel, normalMap: TEX.gravelN, normalScale: new THREE.Vector2(0.9, 0.9), roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   for (const [a, b] of [[-RAIL - 1, -HALF_W - 1.4], [HALF_W + 1.4, RAIL + 1]]) {
     const m = new THREE.Mesh(track.ribbon(a, b, 0.0, 0.0, 10), gravelMat); m.receiveShadow = true; scene.add(m);
   }
@@ -1488,7 +1661,7 @@ function buildWorld() {
   }
 
   // rocks / cliffs
-  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+  const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true, normalMap: TEX.rockN, normalScale: new THREE.Vector2(1.1, 1.1) });
   const rockGeos = [rockGeo(1), rockGeo(2), rockGeo(3), rockGeo(4)];
   const placements = rockGeos.map(() => []);
   const push = (x, y, z, sx, sy, sz, ry, tint, shadow) => placements[Math.floor(rng() * 4)].push({ x, y, z, sx, sy, sz, ry, tint, shadow });
@@ -1576,8 +1749,8 @@ function buildWorld() {
 
 /* ===================== car (physics + weapons) ===================== */
 class Car {
-  constructor(race, { name, color, equip, isPlayer = false, skill = 1 }) {
-    this.race = race; this.name = name; this.color = color; this.equip = equip; this.isPlayer = isPlayer; this.skill = skill;
+  constructor(race, { name, color, equip, isPlayer = false, skill = 1, style = 'balanced' }) {
+    this.race = race; this.name = name; this.style = style; this.ai = null; this.color = color; this.equip = equip; this.isPlayer = isPlayer; this.skill = skill;
     this.stats = computeStats(equip);
     if (!isPlayer) { this.stats.top *= skill; this.stats.accel *= (0.9 + skill * 0.1); }
     this.model = buildCarModel(equip, color); race.scene.add(this.model.root);
@@ -1596,6 +1769,40 @@ class Car {
     // drivetrain & suspension
     this.gear = 1; this.rpm = DRIVETRAIN.idle; this.shiftT = 0; this.boost = 0; this.engineLoad = 0;
     this.yawRate = 0; this.prevHeading = null; this.rollV = 0; this.pitchV = 0; this.heave = 0; this.heaveV = 0;
+    // weapons animation & damage look
+    this.mgRecoil = 0; this.flashT = 0; this.coverT = 0; this.podKickV = [0, 0]; this.detached = false; this.decals = [];
+  }
+  /* ---------- ダメージの見た目：塗装の傷み → ライト破損 → 部品の脱落 ---------- */
+  updateDamageLook() {
+    const m = this.model, hpR = clamp(this.hp / this.maxHp, 0, 1), dmg = 1 - hpR;
+    if (m.paintAO) {
+      const rough = 0.24 + dmg * 0.4, cc = 0.04 + dmg * 0.35;
+      _col.copy(m.baseColor).lerp(SOOT, dmg * 0.35);
+      for (const p of [m.paint, m.paintAO]) { p.roughness = rough; p.clearcoatRoughness = cc; p.color.copy(_col); }
+    }
+    if (m.head !== M.head) m.head.emissiveIntensity = hpR > 0.45 ? 4.5 : hpR > 0.25 ? (Math.random() < 0.12 ? 0.2 : 3.2) : 0;
+    if (hpR < 0.25 && !this.detached && m.detachable) this.detachPart();
+  }
+  detachPart() {
+    const m = this.model, part = m.detachable, r = this.race;
+    this.detached = true;
+    part.getWorldPosition(_v1);
+    r.scene.attach(part);
+    r.flyingParts.push({ o: part, owner: this, life: 4, v: new THREE.Vector3(this.vx * 0.5 + rand(-3, 3), rand(5, 8), this.vz * 0.5 + rand(-3, 3)), w: new THREE.Vector3(rand(-5, 5), rand(-5, 5), rand(-5, 5)) });
+    r.fx.sparks(this.pos.x, this.y + 1, this.pos.z, 14, 9);
+    sound.scrapeAt(this.pos, 14);
+    if (this.isPlayer) r.hud.feed('パーツが脱落！ 速度が低下', 'var(--red)');
+  }
+  repairLook() {
+    const m = this.model;
+    if (this.detached && m.detachable) {
+      const part = m.detachable; part.removeFromParent(); m.body.add(part);
+      part.position.set(0, 0, 0); part.rotation.set(0, 0, 0); part.visible = true;
+      this.race.flyingParts = this.race.flyingParts.filter(f => f.o !== part);
+    }
+    this.detached = false;
+    for (const d of this.decals) d.removeFromParent();
+    this.decals = [];
   }
   /* ---------- drift ---------- */
   startDrift(dir) {
@@ -1655,6 +1862,7 @@ class Car {
     this.heading = tr.ang[i]; this.vx = this.vz = this.vf = this.vl = 0; this.y = 0; this.vy = 0; this.onGround = true;
     this.invuln = 2; this.dead = false; this.model.root.visible = true;
     this.drifting = false; this.boostT = 0; this.slip = 0; this.recoverT = 0; this.skidPrev = [null, null]; this.gear = 1; this.prevHeading = null;
+    this.repairLook();
   }
   damage(amount, attacker, hx, hz) {
     if (this.dead || this.invuln > 0 || this.finished) return;
@@ -1666,8 +1874,8 @@ class Car {
     }
     this.hp -= a;
     if (this.drifting) this.driftHit = true;
-    if (attacker && attacker !== this) { this.lastHitBy = attacker; this.lastHitT = this.race.time; }
-    if (this.isPlayer) { this.race.shake(Math.min(0.45, a * 0.03)); sound.hit(0.8); this.race.hud.damageFlash(); }
+    if (attacker && attacker !== this) { this.lastHitBy = attacker; this.lastHitT = this.race.time; if (!this.isPlayer && this.ai) this.ai.onHit(attacker); }
+    if (this.isPlayer) { this.race.shake(Math.min(0.45, a * 0.03)); sound.hit(0.8); this.race.hud.damageFlash(); this.race.hitFx = Math.min(1, this.race.hitFx + a * 0.08); }
     if (this.hp <= 0) this.destroy(attacker);
   }
   destroy(attacker) {
@@ -1697,6 +1905,7 @@ class Car {
     }
     this.blob.visible = true;
     this.invuln = Math.max(0, this.invuln - dt);
+    this.updateDamageLook();
     // ---- steering input smoothing
     this.steerVis += (inp.steer - this.steerVis) * Math.min(1, dt * 7);
     // ---- nitro
@@ -1715,6 +1924,7 @@ class Car {
     if (this.boostT > 0) { this.boostT -= dt; top *= D.boostTop; acc *= D.boostAccel; }
     this.offroad = Math.abs(this.lat) > HALF_W + 1.2;
     if (this.offroad) top *= 0.55;
+    if (this.hp / this.maxHp < 0.25) top *= 0.9;   // 大ダメージで走行性能が落ちる
     const thr = racing ? inp.throttle : 0, brk = racing ? inp.brake : 0;
     const prevVf = vf;
     // ---- ドライブトレイン：ギア・回転数・ターボ過給・トルクカーブ
@@ -1805,7 +2015,7 @@ class Car {
     if (racing && inp.fire && !this.overheat && this.mgCd <= 0) {
       this.mgCd += 1 / st.mg.rate; this.heat += st.mg.heat;
       if (this.heat >= 1) { this.heat = 1; this.overheat = true; if (this.isPlayer) r.hud.feed('オーバーヒート！', 'var(--red)'); }
-      r.fireBullet(this); this.firing = 0.12;
+      r.fireBullet(this); this.firing = 0.12; this.mgRecoil = 0.035; this.flashT = 0.045;
     }
     if (racing && inp.missile && this.ammo > 0 && this.msCd <= 0) { this.ammo--; this.msCd = 0.45; r.fireMissile(this); }
     inp.missile = false;
@@ -1870,6 +2080,12 @@ class Car {
       const K = 110, C = 11;
       this.rollV += ((tRoll - this.roll) * K - this.rollV * C) * dt; this.roll += this.rollV * dt;
       this.pitchV += ((tPitch - this.pitch) * K - this.pitchV * C) * dt; this.pitch += this.pitchV * dt;
+      // 路面の凹凸：縁石の上はガタガタ、砂地は細かく揺れる
+      const sp = Math.abs(this.vf), al = Math.abs(this.lat);
+      if (this.onGround && sp > 5) {
+        if (al > HALF_W && al < HALF_W + 1.4) this.heaveV += (Math.random() - 0.5) * Math.min(sp, 40) * 0.05;
+        else if (this.offroad) this.heaveV += (Math.random() - 0.5) * Math.min(sp, 40) * 0.02;
+      }
       this.heaveV += (-this.heave * 140 - this.heaveV * 12) * dt; this.heave = clamp(this.heave + this.heaveV * dt, -0.09, 0.06);
     }
     m.body.rotation.set(this.pitch, 0, this.roll);
@@ -1878,6 +2094,19 @@ class Car {
     const steerAng = this.drifting ? clamp(-this.slip * 0.8, -0.6, 0.6) : this.steerVis * 0.45;
     for (const w of m.wheels) { w.spin.rotation.x += this.vf * dt / WHEEL_R; if (w.front) w.pivot.rotation.y += (steerAng - w.pivot.rotation.y) * Math.min(1, dt * 12); }
     if (m.spin && this.firing > 0) m.spin.rotation.z += dt * 30;
+    // 武装のアニメーション：反動・銃身の赤熱・マズルフラッシュ・ポッドのカバーと反動・残弾の弾頭
+    if (m.gun) {
+      this.mgRecoil *= Math.exp(-22 * dt); m.gun.position.z = -this.mgRecoil;
+      m.barrelMat.emissiveIntensity = this.heat * this.heat * 3;
+      this.flashT -= dt; m.flash.visible = this.flashT > 0 && !this.dead;
+      if (m.flash.visible) { m.flash.rotation.z = Math.random() * Math.PI; const s = 0.7 + Math.random() * 0.6; m.flash.scale.set(s, s, s); }
+      this.coverT -= dt;
+      const open = this.coverT > 0 || (this.isPlayer && this.race.lock && this.race.lock.target && this.ammo > 0);
+      for (const c of m.covers) c.rotation.x += ((open ? -1.65 : 0) - c.rotation.x) * Math.min(1, dt * 10);
+      for (let i = 0; i < 2; i++) { this.podKickV[i] *= Math.exp(-12 * dt); m.podKick[i].position.z = -this.podKickV[i]; }
+      const cap = this.stats.ms.ammo, fired = cap - this.ammo;
+      m.tipsOrder.forEach((t, i) => { t.visible = i >= fired && i < cap; });
+    }
     m.tail.emissiveIntensity = this.input.brake > 0 && this.vf > 1 ? 7 : 2.2;
     const flameOn = this.nitroOn || this.boostT > 0;
     if (flameOn) { const c = this.nitroOn ? [0.5, 1.4, 6] : DRIFT_COLORS[this.boostLv - 1]; m.flameMat.color.setRGB(c[0], c[1], c[2]); }
@@ -1891,23 +2120,47 @@ class Car {
 }
 
 /* ===================== AI ===================== */
+/* 戦術タイプ：射撃の積極さ・ミサイルの頻度・体当たり/ブロック/追い抜き/回避/反撃 の傾向 */
+const AI_STYLES = {
+  aggressive: { label: '攻撃型', cone: 0.95, range: 115, burst: [1.0, 2.0], wait: [0.4, 1.1], ms: [6, 10], ram: true, retaliate: true, nitro: 0.45, look: 18 },
+  defensive:  { label: '防御型', cone: 0.975, range: 85, burst: [0.5, 1.0], wait: [1.0, 2.2], ms: [9, 14], block: true, retaliate: true, nitro: 0.3, look: 18 },
+  speed:      { label: 'スピード型', cone: 0.98, range: 70, burst: [0.4, 0.8], wait: [1.5, 3.0], ms: [12, 18], overtake: true, evade: true, nitro: 1.3, look: 32 },
+  harasser:   { label: '妨害型', cone: 0.965, range: 95, burst: [0.6, 1.2], wait: [0.8, 1.8], ms: [4, 7], ram: true, evade: true, nitro: 0.5, look: 18 },
+  balanced:   { label: 'バランス型', cone: 0.97, range: 95, burst: [0.6, 1.4], wait: [0.8, 2.2], ms: [7, 14], retaliate: true, evade: true, nitro: 0.5, look: 20 },
+};
 class AIController {
-  constructor(car, race) { this.car = car; this.race = race; this.phase = rand(0, 10); this.bias = 0; this.fireT = 0; this.fireWait = rand(1, 3); this.msT = rand(6, 12); this.nitroT = 0; this.stuckT = 0; this.revT = 0; this.stuckCount = 0; }
+  constructor(car, race) {
+    this.car = car; this.race = race; this.phase = rand(0, 10); this.bias = 0; this.fireT = 0; this.fireWait = rand(1, 3); this.nitroT = 0; this.stuckT = 0; this.revT = 0; this.stuckCount = 0;
+    this.st = AI_STYLES[car.style] || AI_STYLES.balanced; this.msT = rand(...this.st.ms);
+    this.threat = null; this.threatT = 0; this.hitT = 99;
+    car.ai = this;
+  }
+  // 撃たれたときの反応：反撃型は相手を優先して狙い、回避型は蛇行して射線を外す
+  onHit(attacker) {
+    this.hitT = 0;
+    if (attacker && attacker !== this.car && this.st.retaliate) { this.threat = attacker; this.threatT = 6; }
+  }
   update(dt) {
-    const c = this.car, r = this.race, tr = r.track, inp = c.input;
+    const c = this.car, r = this.race, tr = r.track, inp = c.input, S = this.st;
     if (c.dead) { inp.throttle = 0; inp.fire = false; inp.nitro = false; return; }
+    this.hitT += dt; this.threatT -= dt; if (this.threatT <= 0 || (this.threat && this.threat.dead)) this.threat = null;
     const sp = Math.abs(c.vf), fx = Math.sin(c.heading), fz = Math.cos(c.heading);
-    // avoidance
-    let avoid = 0;
+    // 回避（スピード型は遠くから早めに追い抜きラインへ）／体当たり・ブロックの相手探し
+    let avoid = 0, ramLane = null, blockLane = null;
     for (const o of r.cars) {
       if (o === c || o.dead) continue;
-      const dx = o.pos.x - c.pos.x, dz = o.pos.z - c.pos.z, ahead = dx * fx + dz * fz;
-      if (ahead < 0 || ahead > 18) continue;
-      const side = dx * -fz + dz * fx;
-      if (Math.abs(side) < 2.8 && o.vf < c.vf + 3) avoid += side > 0 ? -1 : 1;
+      const dx = o.pos.x - c.pos.x, dz = o.pos.z - c.pos.z, ahead = dx * fx + dz * fz, side = dx * -fz + dz * fx;
+      if (ahead > 0 && ahead < S.look && Math.abs(side) < (S.overtake ? 3.6 : 2.8) && o.vf < c.vf + 3) avoid += side > 0 ? -1 : 1;
+      const preferred = !this.threat || o === this.threat;
+      if (S.ram && preferred && ahead > 3 && ahead < 22 && Math.abs(side) < 7 && r.state === 'race' && c.hp / c.maxHp > 0.35) ramLane = o.lat;
+      if (S.block && ahead < -2 && ahead > -16 && Math.abs(side) < 6) blockLane = o.lat;
     }
-    this.bias = clamp(this.bias + avoid * dt * 7, -6, 6); this.bias *= Math.exp(-0.4 * dt);
-    const lane = clamp(Math.sin(r.time * 0.21 + this.phase) * 4 + this.bias, -HALF_W + 2, HALF_W - 2);
+    this.bias = clamp(this.bias + avoid * dt * (S.overtake ? 10 : 7), -6, 6); this.bias *= Math.exp(-0.4 * dt);
+    let laneT = Math.sin(r.time * 0.21 + this.phase) * 4 + this.bias;
+    if (ramLane !== null) laneT = lerp(laneT, ramLane, 0.75);            // 体当たりを狙って相手のラインへ寄せる
+    else if (blockLane !== null) laneT = lerp(laneT, blockLane, 0.6);    // 後ろの車の前に入って抜かせない
+    if (S.evade && this.hitT < 2) laneT += Math.sin(r.time * 4.5 + this.phase) * 3.5;   // 被弾直後は蛇行して射線を外す
+    const lane = clamp(laneT, -HALF_W + 2, HALF_W - 2);
     const i = tr.ahead(c.trackIdx, 9 + sp * 0.5);
     const tx = tr.px[i] + tr.sx[i] * lane, tz = tr.pz[i] + tr.sz[i] * lane;
     const diff = wrapAngle(Math.atan2(tx - c.pos.x, tz - c.pos.z) - c.heading);
@@ -1928,24 +2181,25 @@ class AIController {
     if (c.drifting) { thr = 1; brk = sp > target + 18 ? 1 : 0; }
     inp.steer = steer; inp.throttle = thr; inp.brake = brk;
     if (this.nitroT > 0) this.nitroT -= dt;
-    else if (turn < 0.12 && c.nitro > 0.5 && sp > 25 && Math.random() < dt * 0.5) this.nitroT = rand(1, 2.2);
+    else if (turn < 0.12 && c.nitro > 0.5 && sp > 25 && Math.random() < dt * S.nitro) this.nitroT = rand(1, 2.2);
     inp.nitro = this.nitroT > 0 && turn < 0.35;
-    // weapons
+    // 射撃：タイプごとの射角・射程・連射の長さ。反撃中は撃ってきた相手を最優先
     let tgt = null, best = 1e9, mTgt = null;
     for (const o of r.cars) {
       if (o === c || o.dead || !r.nearOnTrack(c, o)) continue;
       const dx = o.pos.x - c.pos.x, dz = o.pos.z - c.pos.z, dist = Math.hypot(dx, dz);
       if (dist < 1) continue;
-      const cos = (dx * fx + dz * fz) / dist;
-      if (dist < 95 && cos > 0.97 && dist < best) { best = dist; tgt = o; }
-      if (dist > 25 && dist < 170 && cos > 0.85) mTgt = o;
+      const cos = (dx * fx + dz * fz) / dist, isThreat = o === this.threat;
+      const score = isThreat ? dist * 0.3 : dist;
+      if (dist < S.range * (isThreat ? 1.2 : 1) && cos > (isThreat ? S.cone - 0.02 : S.cone) && score < best) { best = score; tgt = o; }
+      if (dist > 25 && dist < 170 && cos > 0.85 && (!mTgt || isThreat)) mTgt = o;
     }
     if (tgt) {
       if (this.fireT > 0) { this.fireT -= dt; inp.fire = c.heat < 0.85; }
-      else { inp.fire = false; this.fireWait -= dt; if (this.fireWait <= 0) { this.fireT = rand(0.6, 1.4); this.fireWait = rand(0.8, 2.2); } }
+      else { inp.fire = false; this.fireWait -= dt; if (this.fireWait <= 0) { this.fireT = rand(...S.burst); this.fireWait = rand(...S.wait); } }
     } else { inp.fire = false; this.fireT = 0; }
     this.msT -= dt;
-    if (this.msT <= 0 && c.ammo > 0 && mTgt) { inp.missile = true; this.msT = rand(7, 14); }
+    if (this.msT <= 0 && c.ammo > 0 && mTgt) { inp.missile = true; this.msT = rand(...S.ms); }
   }
 }
 
@@ -1996,6 +2250,17 @@ class HUD {
     this.set('hAmmo', String(p.ammo));
     const mis = $('hMis').children; for (let i = 0; i < mis.length; i++) mis[i].classList.toggle('off', i >= p.ammo);
     $('nitroFx').style.opacity = p.nitroOn || p.boostT > 0 ? '1' : '0';
+    // ミサイルのロックオン表示（狙っている敵の画面位置に枠を出す）
+    const lk = $('lock'), L = r.lock;
+    if (L && L.target && !L.target.dead) {
+      _v1.set(L.target.pos.x, L.target.y + 0.9, L.target.pos.z).project(r.camera);
+      const vis = _v1.z < 1 && Math.abs(_v1.x) < 1.1 && Math.abs(_v1.y) < 1.1;
+      lk.style.display = vis ? 'block' : 'none';
+      if (vis) {
+        lk.style.left = ((_v1.x + 1) / 2 * innerWidth).toFixed(0) + 'px'; lk.style.top = ((1 - _v1.y) / 2 * innerHeight).toFixed(0) + 'px';
+        lk.classList.toggle('on', L.locked); lk.firstElementChild.textContent = L.locked ? 'LOCK' : 'LOCKING';
+      }
+    } else lk.style.display = 'none';
     const dh = $('driftHud');
     dh.classList.toggle('on', p.drifting);
     if (p.drifting) {
@@ -2017,7 +2282,7 @@ class HUD {
     this.boardT -= dt;
     if (this.boardT <= 0) {
       this.boardT = 0.25;
-      $('board').innerHTML = ranks.map((c, i) => `<div class="brow ${c === p ? 'me' : ''}"><span class="bp">${i + 1}</span><span class="bd" style="background:#${new THREE.Color(c.color).getHexString()}"></span><span class="bn">${c.name}</span><span class="bk">${c.kills ? '✕' + c.kills : ''}</span>${c.finished ? '<span class="bk">🏁</span>' : ''}</div>`).join('');
+      $('board').innerHTML = ranks.map((c, i) => `<div class="brow ${c === p ? 'me' : ''}"><span class="bp">${i + 1}</span><span class="bd" style="background:#${new THREE.Color(c.color).getHexString()}"></span><span class="bn">${c.name}${!c.isPlayer && AI_STYLES[c.style] ? `<i class="bt">${AI_STYLES[c.style].label}</i>` : ''}</span><span class="bk">${c.kills ? '✕' + c.kills : ''}</span>${c.finished ? '<span class="bk">🏁</span>' : ''}</div>`).join('');
     }
     // center & warnings
     if (r.state === 'count') { const n = Math.ceil(3 - r.stateT); this.center(n > 0 ? String(n) : 'GO!'); }
@@ -2047,6 +2312,7 @@ class Race {
     W.bulletMesh.count = 0; W.skid.clear(); this.fovKick = 0;
     for (const b of W.bulbs) { b.emissive.setHex(0xff0000); b.emissiveIntensity = 0.05; }
     this.time = 0; this.state = 'intro'; this.stateT = 0; this.bullets = []; this.missiles = [];
+    this.flyingParts = []; this.lock = { target: null, t: 0, locked: false }; this.ray = new THREE.Raycaster();
     this.shakeAmt = 0; this.camMode = 0; this.camHeading = 0; this.camBase = new THREE.Vector3(); this.camLook = new THREE.Vector3(); this.orbitA = 0; this.wrongT = 0; this.paused = false; this.doneT = 0;
     this.cars = []; this.ais = [];
     const grid = [];
@@ -2055,23 +2321,71 @@ class Race {
     order.forEach((o, k) => {
       let car;
       if (o === 'P') { car = new Car(this, { name: 'YOU', color: COLORS[save.color].hex, equip: { ...save.equip }, isPlayer: true }); this.player = car; }
-      else { const R = RIVALS[o]; car = new Car(this, { name: R.name, color: R.color, equip: R.equip, skill: R.skill }); this.ais.push(new AIController(car, this)); }
+      else { const R = RIVALS[o]; car = new Car(this, { name: R.name, color: R.color, equip: R.equip, skill: R.skill, style: R.style }); this.ais.push(new AIController(car, this)); }
       car.place(grid[k].d, grid[k].lat); car.lapCount = -1;
       this.cars.push(car);
     });
     this.playerAI = new AIController(this.player, this);
+    // プレイヤー車のヘッドライト（局所照明）と、マズルフラッシュ・ニトロの一瞬の光
+    this.hitFx = 0;
+    if (Q.lights) {
+      const hl = new THREE.SpotLight(0xfff0dc, 140, 90, 0.42, 0.55, 1.6); hl.position.set(0, 0.72, 2.3);
+      const tg = new THREE.Object3D(); tg.position.set(0, -0.7, 24); this.player.model.root.add(hl, tg); hl.target = tg; this.headLight = hl;
+    }
+    this.fxLight = new THREE.PointLight(0xffb060, 0, 16, 2); this.scene.add(this.fxLight);
     this.hud = new HUD(this);
     this.camHeading = this.player.heading;
     this.camBase.copy(this.player.pos).add(new THREE.Vector3(0, 3, 0));
     renderer.compile(this.scene, this.camera);
   }
   dispose() {
+    for (const f of this.flyingParts) f.o.removeFromParent();
+    if (this.fxLight) this.fxLight.removeFromParent();
     for (const c of this.cars) c.dispose();
     for (const m of this.missiles) m.mesh.visible = false;
     this.world.bulletMesh.count = 0; this.fx.reset();
   }
   volAt(pos) { const d = this.player ? this.player.pos.distanceTo(pos) : 0; return clamp(1 - d / 160, 0, 1) ** 1.5; }
   shake(a) { this.shakeAmt = Math.max(this.shakeAmt, a); }
+  // 弾が当たった車体表面（軽量モデルにレイを飛ばして求める）に弾痕を貼る。古いものから再利用
+  bulletHole(car, b, sx, sy, sz) {
+    const hm = car.model.hitMesh; if (!hm) return null;
+    car.model.root.updateMatrixWorld(true);
+    const len = Math.hypot(sx, sy, sz) || 1;
+    this.ray.set(_v1.set(b.x, b.y, b.z), _v2.set(sx / len, sy / len, sz / len)); this.ray.far = len + 3;
+    const h = this.ray.intersectObject(hm, true)[0]; if (!h || !h.face) return null;
+    const n = _v3.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+    const d = car.decals.length >= 18 ? car.decals.shift() : new THREE.Mesh(geo('hole', () => new THREE.PlaneGeometry(0.11, 0.11)), M.hole);
+    d.removeFromParent(); this.scene.add(d);
+    d.position.copy(h.point).addScaledVector(n, 0.008);
+    d.lookAt(_v1.copy(h.point).addScaledVector(n, 1)); d.rotateZ(Math.random() * 6.28);
+    const s = 0.7 + Math.random() * 0.6; d.scale.set(s, s, s);
+    car.model.body.attach(d); car.decals.push(d);
+    return h.point;
+  }
+  // ミサイルのロックオン：前方の敵を 0.6 秒捉え続けるとロック完了
+  updateLock(dt) {
+    const p = this.player, L = this.lock, fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+    let best = null, bd = 1e9;
+    if (!p.dead && p.ammo > 0 && this.state === 'race') for (const o of this.cars) {
+      if (o === p || o.dead || !this.nearOnTrack(p, o)) continue;
+      const ox = o.pos.x - p.pos.x, oz = o.pos.z - p.pos.z, d = Math.hypot(ox, oz);
+      if (d > 260 || d < 4 || (ox * fx + oz * fz) / d < 0.8) continue;
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (best !== L.target) { L.target = best; L.t = 0; L.locked = false; }
+    else if (best) { L.t += dt; if (!L.locked && L.t > 0.6) { L.locked = true; sound.lockOn(); } }
+  }
+  updateFlyingParts(dt) {   // 脱落した部品：放物線を描いて飛び、地面で跳ねて止まる
+    for (const f of this.flyingParts) {
+      if (f.life <= 0) continue;
+      f.life -= dt; f.v.y -= 20 * dt; f.o.position.addScaledVector(f.v, dt);
+      if (f.o.position.y < 0.05) { f.o.position.y = 0.05; f.v.y *= -0.3; f.v.x *= 0.5; f.v.z *= 0.5; f.w.multiplyScalar(0.5); }
+      f.o.rotation.x += f.w.x * dt; f.o.rotation.y += f.w.y * dt; f.o.rotation.z += f.w.z * dt;
+      if (f.life > 2.5 && Math.random() < 0.6) this.fx.smk.spawn(f.o.position.x, f.o.position.y + 0.5, f.o.position.z, 0, 1, 0, 0.2, 0.2, 0.2, 1, 0.6, 2, 0.5, 1, -0.5);
+      if (f.life <= 0) f.o.visible = false;
+    }
+  }
   // コース上で近い車か（崖越しにコースの反対側を狙わないため）
   nearOnTrack(a, b) { const L = this.track.length; let d = Math.abs(a.d - b.d) % L; d = Math.min(d, L - d); return d < 280; }
   ranking() {
@@ -2104,10 +2418,16 @@ class Race {
     sound.gunAt(_v1, car.isPlayer, car.stats.mg.id);
   }
   fireMissile(car) {
-    const pod = car.model.pods[car.podIdx++ % car.model.pods.length]; pod.getWorldPosition(_v1);
+    const pi = car.podIdx++ % car.model.pods.length, pod = car.model.pods[pi]; pod.getWorldPosition(_v1);
     const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
-    let target = null, best = 1e9;
-    for (const o of this.cars) {
+    // 発射の反動・カバーを開く・ポッド後部からの排気
+    car.podKickV[pi] = 0.07; car.coverT = 1.2;
+    for (let i = 0; i < Math.round(8 * PQ); i++) this.fx.smk.spawn(_v1.x - fx * 1.25, _v1.y, _v1.z - fz * 1.25, -fx * rand(4, 8) + rand(-1, 1), rand(0, 1.5), -fz * rand(4, 8) + rand(-1, 1), 0.75, 0.74, 0.72, rand(0.8, 1.4), 0.6, 2.6, 0.55, 2, -0.4);
+    this.fx.add.spawn(_v1.x - fx * 1.2, _v1.y, _v1.z - fz * 1.2, -fx * 6, 0, -fz * 6, 6, 3.2, 1, 0.12, 1.2, 0.4, 1);
+    // プレイヤーはロックオン中の相手を狙う
+    const lk = car.isPlayer && this.lock.target && !this.lock.target.dead ? this.lock.target : null;
+    let target = lk, best = lk ? 0 : 1e9;
+    if (!lk) for (const o of this.cars) {
       if (o === car || o.dead || !this.nearOnTrack(car, o)) continue;
       const ox = o.pos.x - car.pos.x, oz = o.pos.z - car.pos.z, dist = Math.hypot(ox, oz);
       if (dist > 260 || dist < 3) continue;
@@ -2148,7 +2468,9 @@ class Race {
         if (ex * ex + ey * ey * 2 + ez * ez < 1.7 * 1.7) { hit = c; hitT = t; break; }
       }
       if (hit) {
-        const hx = b.x + sx * hitT, hy = b.y + sy * hitT, hz = b.z + sz * hitT;
+        let hx = b.x + sx * hitT, hy = b.y + sy * hitT, hz = b.z + sz * hitT;
+        const hp = this.bulletHole(hit, b, sx, sy, sz);   // 車体の表面に弾痕を残す
+        if (hp) { hx = hp.x; hy = hp.y; hz = hp.z; }
         this.fx.sparks(hx, hy, hz, 5, 7); hit.damage(b.dmg, b.owner, b.x, b.z);
         sound.impactAt(_v2.set(hx, hy, hz));
         this.bullets.splice(i, 1); continue;
@@ -2268,6 +2590,8 @@ class Race {
     this.collideCars();
     this.updateProjectiles(dt);
     this.updateItems(dt);
+    if (racing) this.updateLock(dt);
+    this.updateFlyingParts(dt);
     this.world.skid.update();
     this.fx.update(dt, this.camera);
     // wrong way
@@ -2277,6 +2601,14 @@ class Race {
     if (this.time > 900 && this.state === 'race') { this.state = 'done'; this.doneT = 4.5; }
     this.updateCamera(dt);
     this.hud.update(dt);
+    // 画面効果：速度感・被弾の色ずれ、局所ライト
+    const spN = clamp((Math.abs(p.vf) - 25) / 40, 0, 1);
+    gradePass.uniforms.uSpeed.value = p.dead ? 0 : spN * 0.55 + (p.nitroOn || p.boostT > 0 ? 0.55 : 0);
+    gradePass.uniforms.uHit.value = this.hitFx; this.hitFx *= Math.exp(-6 * dt);
+    if (this.headLight) this.headLight.intensity = !p.dead && p.model.head.emissiveIntensity > 0.5 ? 140 : 0;
+    if (p.flashT > 0 && !p.dead) { p.model.muzzle.getWorldPosition(this.fxLight.position); this.fxLight.color.setHex(0xffb060); this.fxLight.intensity = 45; }
+    else if ((p.nitroOn || p.boostT > 0) && !p.dead) { p.model.flames[0].getWorldPosition(this.fxLight.position); this.fxLight.color.setHex(0x5aa0ff); this.fxLight.intensity = 25 + Math.random() * 15; }
+    else this.fxLight.intensity = 0;
     sound.setListener(this.camera);
     sound.updatePlayer(p, false);
     sound.updateAI(this.cars, { x: p.vx, z: p.vz });
@@ -2576,7 +2908,7 @@ enterTitle();
 loop();
 requestAnimationFrame(() => $('loading').classList.add('hide'));
 // expose for debugging
-window.__ir = { get race() { return race; }, get state() { return state; }, world: () => world, garage, sound,
+window.__ir = { get race() { return race; }, get state() { return state; }, world: () => world, garage, sound, renderer, applyQuality: q => applyQuality(q),
   renderOnce() { if (race) renderScene(race.scene, race.camera); else { updateGarage(0, state); renderScene(garage.scene, garage.camera); } } };
 </script>
 </body>
