@@ -129,7 +129,12 @@ kbd{font-family:'Orbitron';font-size:11px}
 #hpBar i{background:linear-gradient(90deg,#2ee87e,#7dffb2)}
 #hpBar.low i{background:linear-gradient(90deg,#ff2b3f,#ff7a5a)}
 #nitroBar i{background:linear-gradient(90deg,#2a7bff,#5ff2ff)}
-#driftHud{position:absolute;left:50%;bottom:118px;transform:translateX(-50%);text-align:center;opacity:0;transition:opacity .15s}
+.h-gear{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:6px}
+.h-gear b{font-weight:900;font-size:22px;color:var(--orange);width:20px;text-align:center}
+.rpm{width:170px;height:8px;background:rgba(255,255,255,.1);position:relative;overflow:hidden;clip-path:polygon(0 0,100% 0,calc(100% - 5px) 100%,0 100%)}
+.rpm i{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#3df2ff 0,#3df2ff 116px,#ffd23d 140px,#ff3b4e 160px);background-size:170px 100%}
+.rpm.red i{animation:blink .06s infinite alternate}
+#driftHud{position:absolute;left:50%;bottom:150px;transform:translateX(-50%);text-align:center;opacity:0;transition:opacity .15s}
 #driftHud.on{opacity:1}
 .dlv{display:flex;gap:6px;justify-content:center}
 .dlv b{width:58px;height:9px;background:rgba(255,255,255,.12);position:relative;overflow:hidden;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
@@ -167,7 +172,7 @@ kbd{font-family:'Orbitron';font-size:11px}
   .glabel{font-size:10px;margin:6px 0 3px} .gbar{height:10px}
   .missiles b{width:13px;height:22px}
   .h-bc{bottom:14px} .h-speed{font-size:40px}
-  #driftHud{bottom:132px} .dlv b{width:40px} .dpts{font-size:17px} .dpts small{display:block;margin:2px 0 0}
+  #driftHud{bottom:150px} .rpm{width:120px} .dlv b{width:40px} .dpts{font-size:17px} .dpts small{display:block;margin:2px 0 0}
   .fmsg{font-size:15px} #hCenter{font-size:84px} #hCenter.sm{font-size:30px}
 }
 
@@ -268,7 +273,7 @@ kbd{font-family:'Orbitron';font-size:11px}
       <div class="gbar" id="nitroBar"><i style="width:100%"></i></div>
     </div>
     <div id="driftHud"><div class="dlv"><b><i></i></b><b><i></i></b><b><i></i></b></div><div class="dpts">DRIFT <span id="hDrift">0</span><small id="hDriftLv"></small></div></div>
-    <div class="h-bc"><div class="h-speed"><span id="hSpeed">0</span><small>KM/H</small></div></div>
+    <div class="h-bc"><div class="h-speed"><span id="hSpeed">0</span><small>KM/H</small></div><div class="h-gear"><b id="hGear">1</b><div class="rpm" id="rpmBar"><i></i></div></div></div>
     <div class="h-br">
       <div class="glabel"><span>MACHINE GUN <kbd style="color:var(--dim)">[SPACE]</kbd></span><span id="hHeat">COOL</span></div>
       <div class="gbar" id="heatBar"><i style="width:0%"></i></div>
@@ -323,6 +328,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /* =====================================================================
    調整用データ（ここの数値を変えるとバランスや見た目が変わります）
@@ -359,6 +365,8 @@ const CONFIG = {
     bonusCap: 500,         // ドリフトボーナスの上限 (CR)
   },
 };
+// 6速ミッション（自動変速）。タイヤ半径0.36mで、6速・約230km/hのとき約6600回転
+const DRIVETRAIN = { ratios: [3.6, 2.2, 1.55, 1.2, 0.98, 0.8], final: 4.9, idle: 900, up: 6900, down: 3300, redline: 7300, shiftTime: 0.16 };
 const DRIFT_COLORS = [[0.4, 1.4, 6], [6, 2.4, 0.4], [4, 0.8, 6]];  // ブーストLv1青 / Lv2橙 / Lv3紫
 
 const PARTS = {
@@ -455,76 +463,271 @@ function computeStats(eq) {
 }
 
 /* ===================== sound (Web Audio) ===================== */
+/*  音の構成
+    ・すべての音は「直接音 → マスター」と「残響（峡谷の反響を模したインパルス応答）」の2系統に送る
+    ・他の車・銃声・爆発は 3D 定位（HRTF パンナー）＋距離による高音の減衰＋音速による遅れ
+    ・エンジンは V6 の倍音構成（クランク次数）で合成し、回転数・負荷・ターボ過給・シフトに追従する */
+const SND = { master: 0.85, engine: 1.0, sfx: 1.0, reverb: 0.5 };
 class Sound {
-  constructor() { this.ctx = null; this.eng = null; }
+  constructor() { this.ctx = null; this.eng = null; this.aiVoices = new Map(); this.loops = new Set(); this.lis = new THREE.Vector3(); }
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    const ctx = this.ctx = new AC();
-    this.comp = ctx.createDynamicsCompressor(); this.comp.connect(ctx.destination);
-    this.master = ctx.createGain(); this.master.gain.value = 0.5; this.master.connect(this.comp);
-    const len = ctx.sampleRate * 2, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    this.noiseBuf = buf;
+    const ctx = this.ctx = new AC({ latencyHint: 'interactive' });
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.25;
+    comp.connect(ctx.destination);
+    this.master = ctx.createGain(); this.master.gain.value = SND.master; this.master.connect(comp);
+    this.reverb = ctx.createConvolver(); this.reverb.buffer = this.makeIR(3.0);
+    this.revIn = ctx.createGain(); this.revIn.connect(this.reverb);
+    const revOut = ctx.createGain(); revOut.gain.value = SND.reverb; this.reverb.connect(revOut); revOut.connect(this.master);
+    const sr = ctx.sampleRate, mk = (sec, fill) => { const b = ctx.createBuffer(1, sr * sec, sr); fill(b.getChannelData(0)); return b; };
+    this.noiseBuf = mk(2, d => { for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; });
+    this.pinkBuf = mk(2, d => { let b0 = 0, b1 = 0, b2 = 0; for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; b0 = 0.99765 * b0 + w * 0.099; b1 = 0.963 * b1 + w * 0.2965; b2 = 0.57 * b2 + w * 1.0527; d[i] = (b0 + b1 + b2 + w * 0.1848) * 0.2; } });
+    this.crackBuf = mk(2, d => { for (let i = 0; i < d.length; i++) d[i] = Math.random() < 0.0025 ? (Math.random() * 2 - 1) : d[i - 1] * 0.86 || 0; });
+    const k = 2.5, n = 1024, curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; curve[i] = Math.tanh(k * x) / Math.tanh(k); }
+    this.driveCurve = curve;
   }
-  noise({ dur = 0.2, type = 'bandpass', freq = 1000, freqEnd = null, q = 1, vol = 0.3, attack = 0.003 }) {
-    const ctx = this.ctx; if (!ctx || vol < 0.003) return; const t = ctx.currentTime;
-    const src = ctx.createBufferSource(); src.buffer = this.noiseBuf;
-    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.setValueAtTime(freq, t); if (freqEnd) f.frequency.exponentialRampToValueAtTime(freqEnd, t + dur); f.Q.value = q;
-    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f); f.connect(g); g.connect(this.master); src.start(t, Math.random() * 1.5); src.stop(t + dur + 0.05);
+  // 峡谷っぽい残響：初期反射＋減衰する残響＋崖からのやまびこ
+  makeIR(sec) {
+    const ctx = this.ctx, sr = ctx.sampleRate, len = Math.floor(sr * sec), buf = ctx.createBuffer(2, len, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch); let lp = 0;
+      for (let i = 0; i < len; i++) { const t = i / sr; const w = Math.random() * 2 - 1; lp += (w - lp) * (0.25 + 0.6 * Math.exp(-t * 2)); d[i] = lp * Math.exp(-t * 2.6) * (t < 0.012 ? t / 0.012 : 1) * 0.6; }
+      for (const [t, a] of [[0.029, 0.5], [0.047 + ch * 0.006, 0.42], [0.071, 0.33], [0.113 + ch * 0.01, 0.25]]) d[Math.floor(t * sr)] += a;
+      for (const [t0, a] of [[0.44 + ch * 0.03, 0.22], [0.9 + ch * 0.05, 0.11]]) {   // やまびこ
+        const s = Math.floor(t0 * sr); for (let i = 0; i < sr * 0.08 && s + i < len; i++) d[s + i] += (Math.random() * 2 - 1) * a * Math.exp(-i / (sr * 0.02));
+      }
+    }
+    return buf;
   }
-  tone({ freq = 440, freqEnd = null, dur = 0.2, type = 'sine', vol = 0.2, attack = 0.005, delay = 0 }) {
-    const ctx = this.ctx; if (!ctx || vol < 0.003) return; const t = ctx.currentTime + delay;
-    const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t); if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, t + dur);
-    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + dur + 0.05);
+  get now() { return this.ctx.currentTime; }
+  env(g, t, vol, attack, dur) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(vol, 0.0002), t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); }
+  // ノイズの一発音（フィルター＋エンベロープ）
+  burst(dest, { buf, dur = 0.2, type = 'bandpass', f = 1000, fEnd = null, q = 1, vol = 0.3, attack = 0.002, delay = 0, rate = 1 }) {
+    const ctx = this.ctx; if (!ctx || vol < 0.002) return; const t = this.now + delay;
+    const src = ctx.createBufferSource(); src.buffer = buf || this.noiseBuf; src.playbackRate.value = rate;
+    const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.setValueAtTime(f, t); if (fEnd) fl.frequency.exponentialRampToValueAtTime(fEnd, t + dur); fl.Q.value = q;
+    const g = ctx.createGain(); this.env(g, t, vol, attack, dur);
+    src.connect(fl); fl.connect(g); g.connect(dest); src.start(t, Math.random() * 1.2); src.stop(t + dur + 0.05);
   }
-  shoot(v = 1) { this.noise({ dur: 0.07, freq: 2400, freqEnd: 700, q: 0.8, vol: 0.2 * v }); this.tone({ freq: 160, freqEnd: 60, dur: 0.06, type: 'square', vol: 0.05 * v }); }
-  missile(v = 1) { this.noise({ dur: 0.7, freq: 400, freqEnd: 3200, q: 1.4, vol: 0.32 * v, attack: 0.03 }); }
-  explosion(v = 1) { this.noise({ dur: 1.4, type: 'lowpass', freq: 2600, freqEnd: 70, q: 0.7, vol: 0.9 * v }); this.tone({ freq: 95, freqEnd: 28, dur: 0.7, vol: 0.55 * v }); }
-  hit(v = 1) { this.noise({ dur: 0.05, type: 'highpass', freq: 3200, vol: 0.16 * v }); this.tone({ freq: 1100, freqEnd: 500, dur: 0.05, type: 'triangle', vol: 0.05 * v }); }
-  scrape(v = 1) { this.noise({ dur: 0.18, freq: 1800, q: 3, vol: 0.12 * v }); }
-  thump(v = 1) { this.tone({ freq: 70, freqEnd: 35, dur: 0.25, vol: 0.4 * v }); }
+  osc(dest, { type = 'sine', f = 440, fEnd = null, dur = 0.2, vol = 0.2, attack = 0.003, delay = 0 }) {
+    const ctx = this.ctx; if (!ctx || vol < 0.002) return; const t = this.now + delay;
+    const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f, t); if (fEnd) o.frequency.exponentialRampToValueAtTime(fEnd, t + dur);
+    const g = ctx.createGain(); this.env(g, t, vol, attack, dur);
+    o.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + 0.05);
+  }
+  // 3D 定位の出口を作る（距離で高音が減り、残響が増え、必要なら音速ぶん遅れて届く）
+  spatial(pos, { ref = 8, roll = 1, hrtf = true, delay = false, send = 0.2 } = {}) {
+    const ctx = this.ctx, d = this.lis.distanceTo(pos);
+    const p = ctx.createPanner(); p.panningModel = hrtf ? 'HRTF' : 'equalpower'; p.distanceModel = 'inverse'; p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = 2000;
+    p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = clamp(20000 / (1 + d / 35), 700, 20000);
+    lp.connect(p); p.connect(this.master);
+    const s = ctx.createGain(); s.gain.value = send + clamp(d / 180, 0, 0.6); lp.connect(s); s.connect(this.revIn);
+    let input = lp;
+    if (delay && d > 8) { const dl = ctx.createDelay(2); dl.delayTime.value = Math.min(1.6, d / 343); dl.connect(lp); input = dl; }
+    return { input, panner: p, lp, dist: d };
+  }
+  setListener(cam) {
+    const ctx = this.ctx; if (!ctx) return; const L = ctx.listener, t = this.now;
+    this.lis.copy(cam.position);
+    cam.getWorldDirection(_v2);
+    if (L.positionX) {
+      L.positionX.setTargetAtTime(cam.position.x, t, 0.02); L.positionY.setTargetAtTime(cam.position.y, t, 0.02); L.positionZ.setTargetAtTime(cam.position.z, t, 0.02);
+      L.forwardX.setTargetAtTime(_v2.x, t, 0.02); L.forwardY.setTargetAtTime(_v2.y, t, 0.02); L.forwardZ.setTargetAtTime(_v2.z, t, 0.02);
+      L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0;
+    } else { L.setPosition(cam.position.x, cam.position.y, cam.position.z); L.setOrientation(_v2.x, _v2.y, _v2.z, 0, 1, 0); }
+  }
+  // ---------------- 銃声（クラック＋胴鳴り＋低音の衝撃＋機関部の金属音）
+  gunAt(pos, isPlayer, mk) {
+    if (!this.ctx) return;
+    let dest, v = SND.sfx;
+    if (isPlayer) { dest = this.master; v *= 0.8; this.burst(this.revIn, { dur: 0.25, type: 'lowpass', f: 2500, vol: 0.25 * v }); }
+    else { if (this.lis.distanceTo(pos) > 170) return; dest = this.spatial(pos, { ref: 10, hrtf: false, send: 0.3 }).input; v *= 2.0; }
+    const tone = mk === 'mk3' ? 1.25 : mk === 'mk2' ? 0.9 : 1;
+    this.burst(dest, { dur: 0.035, type: 'highpass', f: 1500 * tone, q: 0.7, vol: 0.9 * v, attack: 0.0007 });
+    this.burst(dest, { dur: 0.12, type: 'lowpass', f: 1300 * tone, fEnd: 260, q: 0.8, vol: 0.75 * v, attack: 0.001 });
+    this.osc(dest, { type: 'sine', f: 165 / tone, fEnd: 45, dur: 0.1, vol: 0.75 * v, attack: 0.0008 });
+    this.osc(dest, { type: 'square', f: 2300 + Math.random() * 500, dur: 0.012, vol: 0.05 * v, delay: 0.03 });
+  }
+  impactAt(pos) {   // 弾が車体に当たる金属音
+    if (!this.ctx || this.lis.distanceTo(pos) > 90) return;
+    const dest = this.spatial(pos, { ref: 4, hrtf: false, send: 0.15 }).input, f = 2200 + Math.random() * 2600;
+    this.burst(dest, { dur: 0.09, type: 'bandpass', f, q: 18, vol: 0.9 * SND.sfx, attack: 0.0005 });
+    this.burst(dest, { dur: 0.03, type: 'highpass', f: 3000, vol: 0.35 * SND.sfx, attack: 0.0005 });
+    this.osc(dest, { f: 210, fEnd: 90, dur: 0.06, vol: 0.25 * SND.sfx });
+  }
+  // ---------------- 爆発（クラック＋低音ブーム＋轟音＋破片のパチパチ＋大きな残響）
+  explosionAt(pos, scale = 1) {
+    if (!this.ctx) return; const d = this.lis.distanceTo(pos); if (d > 700) return;
+    const sp = this.spatial(pos, { ref: 14, roll: 0.85, delay: true, send: 0.45 }), v = clamp(scale, 0.5, 1.5) * SND.sfx, o = sp.input;
+    this.burst(o, { dur: 0.06, type: 'highpass', f: 500, vol: 1.0 * v, attack: 0.0007 });
+    this.osc(o, { type: 'sine', f: 68, fEnd: 22, dur: 1.5, vol: 1.3 * v, attack: 0.003 });
+    this.osc(o, { type: 'triangle', f: 120, fEnd: 35, dur: 0.6, vol: 0.5 * v, attack: 0.003 });
+    this.burst(o, { buf: this.pinkBuf, dur: 2.0, type: 'lowpass', f: 2400, fEnd: 110, q: 0.9, vol: 1.3 * v, attack: 0.004 });
+    this.burst(o, { buf: this.crackBuf, dur: 1.4, type: 'bandpass', f: 2800, q: 0.7, vol: 1.1 * v, delay: 0.1, attack: 0.04 });
+    if (d < 30) this.osc(this.master, { f: 38, fEnd: 20, dur: 0.9, vol: 0.6 * v * (1 - d / 30) });   // 近いときの体に響く低音
+  }
+  missileAt(pos, isPlayer) {
+    if (!this.ctx) return;
+    const dest = isPlayer ? this.master : this.spatial(pos, { ref: 8, send: 0.3 }).input;
+    this.burst(dest, { dur: 0.08, type: 'highpass', f: 900, vol: 0.7 * SND.sfx });
+    this.burst(dest, { dur: 0.9, type: 'bandpass', f: 350, fEnd: 2800, q: 1.2, vol: 0.55 * SND.sfx, attack: 0.02 });
+    this.osc(dest, { type: 'sawtooth', f: 90, fEnd: 220, dur: 0.5, vol: 0.12 * SND.sfx });
+  }
+  rocketLoop(pos) {   // 飛んでいるミサイルの噴射音（位置が動く）
+    if (!this.ctx || this.lis.distanceTo(pos) > 260) return null;
+    const ctx = this.ctx, sp = this.spatial(pos, { ref: 6, send: 0.25 });
+    const src = ctx.createBufferSource(); src.buffer = this.pinkBuf; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 0.6;
+    const g = ctx.createGain(); g.gain.value = 0.0001; g.gain.exponentialRampToValueAtTime(0.9 * SND.sfx, this.now + 0.08);
+    src.connect(bp); bp.connect(g); g.connect(sp.input); src.start();
+    const loop = {
+      set: p => { const t = this.now; sp.panner.positionX.setTargetAtTime(p.x, t, 0.02); sp.panner.positionY.setTargetAtTime(p.y, t, 0.02); sp.panner.positionZ.setTargetAtTime(p.z, t, 0.02); sp.lp.frequency.setTargetAtTime(clamp(20000 / (1 + this.lis.distanceTo(p) / 35), 700, 20000), t, 0.05); },
+      stop: () => { try { g.gain.setTargetAtTime(0.0001, this.now, 0.03); src.stop(this.now + 0.2); } catch (e) {} this.loops.delete(loop); },
+    };
+    this.loops.add(loop);
+    return loop;
+  }
+  hit(v = 1) { if (!this.ctx) return; this.osc(this.master, { f: 120, fEnd: 50, dur: 0.12, vol: 0.5 * v }); this.burst(this.master, { dur: 0.06, type: 'bandpass', f: 1800, q: 3, vol: 0.4 * v }); }
+  scrapeAt(pos, v = 1) {
+    if (!this.ctx || this.lis.distanceTo(pos) > 80) return;
+    const dest = this.spatial(pos, { ref: 5, hrtf: false }).input;
+    this.burst(dest, { buf: this.crackBuf, dur: 0.25, type: 'bandpass', f: 2600, q: 2, vol: 0.9 * clamp(v / 10, 0.3, 1) });
+    this.burst(dest, { dur: 0.22, type: 'bandpass', f: 1400 + Math.random() * 900, q: 9, vol: 0.5 * clamp(v / 10, 0.3, 1) });
+  }
+  scrape(v = 1) { if (!this.ctx) return; this.burst(this.master, { buf: this.crackBuf, dur: 0.25, type: 'bandpass', f: 2600, q: 2, vol: 0.7 * v }); this.burst(this.master, { dur: 0.2, type: 'bandpass', f: 1600, q: 8, vol: 0.4 * v }); }
+  thump(v = 1) { if (!this.ctx) return; this.osc(this.master, { f: 75, fEnd: 32, dur: 0.3, vol: 0.7 * v }); this.burst(this.master, { dur: 0.12, type: 'lowpass', f: 600, vol: 0.4 * v }); }
+  // ---------------- 互換用（UIなど）
+  noise({ dur = 0.2, type = 'bandpass', freq = 1000, freqEnd = null, q = 1, vol = 0.3, attack = 0.003 }) { if (this.ctx) this.burst(this.master, { dur, type, f: freq, fEnd: freqEnd, q, vol, attack }); }
+  tone({ freq = 440, freqEnd = null, dur = 0.2, type = 'sine', vol = 0.2, attack = 0.005, delay = 0 }) { if (this.ctx) this.osc(this.master, { type, f: freq, fEnd: freqEnd, dur, vol, attack, delay }); }
   pickup() { [660, 880, 1320].forEach((f, i) => this.tone({ freq: f, dur: 0.12, type: 'triangle', vol: 0.12, delay: i * 0.06 })); }
   beep(hi) { this.tone({ freq: hi ? 1046 : 523, dur: hi ? 0.7 : 0.25, type: 'square', vol: 0.1 }); }
   ui() { this.tone({ freq: 1400, dur: 0.04, type: 'triangle', vol: 0.05 }); }
   buy() { this.tone({ freq: 784, dur: 0.1, type: 'triangle', vol: 0.12 }); this.tone({ freq: 1175, dur: 0.2, type: 'triangle', vol: 0.12, delay: 0.08 }); }
   error() { this.tone({ freq: 150, dur: 0.18, type: 'square', vol: 0.08 }); }
+  // ---------------- エンジン：V6 の倍音構成（クランク次数）を PeriodicWave で合成
+  engineWave() {
+    if (this._wave) return this._wave;
+    const N = 48, re = new Float32Array(N), im = new Float32Array(N), near = (a, b) => Math.abs(a - b * Math.round(a / b)) < 1e-6;
+    for (let h = 1; h < N; h++) {
+      const o = h * 0.5;   // 基本波 = 0.5次（4ストロークは2回転で1サイクル）
+      let a = 0.05 / (1 + o * 0.2);
+      if (near(o, 3)) a += 1.0 / (1 + o * 0.11);          // 爆発の主成分（3次・6次…）
+      else if (near(o, 1.5)) a += 0.5 / (1 + o * 0.14);   // 片バンクの脈動（1.5次）
+      else if (near(o, 1)) a += 0.14 / (1 + o * 0.1);
+      const ph = Math.random() * Math.PI * 2; re[h] = a * Math.cos(ph); im[h] = a * Math.sin(ph);
+    }
+    return (this._wave = this.ctx.createPeriodicWave(re, im));
+  }
+  makeEngineVoice(dest, full) {
+    const ctx = this.ctx, wave = this.engineWave(), nodes = [];
+    const src = (buf) => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; nodes.push(s); return s; };
+    const osc = (type) => { const o = ctx.createOscillator(); if (type === 'wave') o.setPeriodicWave(wave); else o.type = type; nodes.push(o); return o; };
+    const gain = (v) => { const g = ctx.createGain(); g.gain.value = v; return g; };
+    const filt = (type, f, q = 0.7, g = 0) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; b.gain.value = g; return b; };
+    const mix = gain(1);
+    const o1 = osc('wave'), o2 = osc('wave'); const g1 = gain(0.6), g2 = gain(0.4);   // 2本をわずかにずらしてシリンダーごとのムラを出す
+    o1.connect(g1); g1.connect(mix); o2.connect(g2); g2.connect(mix);
+    // 燃焼ノイズ：点火周期のノコギリ波で振幅変調して「バリバリ」した質感に
+    const nz = src(this.noiseBuf), nf = filt('bandpass', 700, 0.8), am = gain(0), lfo = osc('sawtooth'), lfoG = gain(1), nl = gain(0.2);
+    lfo.connect(lfoG); lfoG.connect(am.gain); nz.connect(nf); nf.connect(am); am.connect(nl); nl.connect(mix);
+    // 負荷で歪む → 排気管の共鳴（110Hz / 340Hz）→ こもり
+    const pre = gain(1), sh = ctx.createWaveShaper(); sh.curve = this.driveCurve; sh.oversample = full ? '2x' : 'none';
+    const pk1 = filt('peaking', 110, 1.2, 7), pk2 = filt('peaking', 340, 1.5, 4), lp = filt('lowpass', 1500), out = gain(0);
+    mix.connect(pre); pre.connect(sh); sh.connect(pk1); pk1.connect(pk2); pk2.connect(lp); lp.connect(out); out.connect(dest);
+    const v = { o1, o2, lfo, nl, pre, lp, out, nodes, full };
+    if (full) {
+      const tw = osc('sine'), tn = src(this.noiseBuf), tf = filt('bandpass', 3000, 25), tg = gain(0);            // ターボの過給音
+      tw.connect(tg); tn.connect(tf); tf.connect(tg); tg.connect(dest);
+      const wn = src(this.pinkBuf), wf = filt('bandpass', 650, 0.5), wg = gain(0); wn.connect(wf); wf.connect(wg); wg.connect(dest);          // 風切り音
+      const rn = src(this.pinkBuf), rf = filt('lowpass', 320), rg = gain(0); rn.connect(rf); rf.connect(rg); rg.connect(dest);              // ロードノイズ
+      const gn = src(this.crackBuf), gf = filt('bandpass', 2200, 0.7), gg = gain(0); gn.connect(gf); gf.connect(gg); gg.connect(dest);      // 砂利
+      const sq = src(this.noiseBuf), sf1 = filt('bandpass', 1050, 12), sf2 = filt('bandpass', 2250, 14), so = osc('triangle'), sog = gain(0.18), sg = gain(0);  // スキール
+      sq.connect(sf1); sq.connect(sf2); sf1.connect(sg); sf2.connect(sg); so.connect(sog); sog.connect(sg); sg.connect(dest);
+      const nn = src(this.noiseBuf), nnf = filt('bandpass', 1100, 0.6), nng = gain(0); nn.connect(nnf); nnf.connect(nng); nng.connect(dest); // ニトロ
+      Object.assign(v, { tw, tf, tg, wg, rg, gg, sg, sf1, sf2, so, nng });
+    }
+    for (const n of nodes) n.start();
+    return v;
+  }
+  setVoice(v, rpm, load, vol, pitch = 1) {
+    const t = this.now, f = rpm / 120 * pitch;
+    v.o1.frequency.setTargetAtTime(f, t, 0.015); v.o2.frequency.setTargetAtTime(f * 1.006, t, 0.015);
+    v.lfo.frequency.setTargetAtTime(rpm / 20 * pitch, t, 0.015);   // V6 の点火周期 = 回転数 / 60 × 3
+    v.pre.gain.setTargetAtTime(0.5 + load * 1.8, t, 0.04);
+    v.nl.gain.setTargetAtTime(0.12 + load * 0.3, t, 0.04);
+    v.lp.frequency.setTargetAtTime(500 + rpm / 7200 * 3200 + load * 1800, t, 0.04);
+    v.out.gain.setTargetAtTime(vol, t, 0.05);
+  }
   startEngine() {
-    if (!this.ctx || this.eng) return; const ctx = this.ctx;
-    const o1 = ctx.createOscillator(); o1.type = 'sawtooth';
-    const o2 = ctx.createOscillator(); o2.type = 'square';
-    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 600; f.Q.value = 3;
-    const g = ctx.createGain(); g.gain.value = 0; const g2 = ctx.createGain(); g2.gain.value = 0.4;
-    o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(g); g.connect(this.master);
-    const n = ctx.createBufferSource(); n.buffer = this.noiseBuf; n.loop = true;
-    const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 900; nf.Q.value = 0.7;
-    const ng = ctx.createGain(); ng.gain.value = 0; n.connect(nf); nf.connect(ng); ng.connect(this.master);
-    // タイヤのスキール音（ノイズ＋揺れる三角波）
-    const n2 = ctx.createBufferSource(); n2.buffer = this.noiseBuf; n2.loop = true;
-    const sf = ctx.createBiquadFilter(); sf.type = 'bandpass'; sf.frequency.value = 2300; sf.Q.value = 7;
-    const sg = ctx.createGain(); sg.gain.value = 0;
-    const o3 = ctx.createOscillator(); o3.type = 'triangle'; o3.frequency.value = 1000;
-    const g3 = ctx.createGain(); g3.gain.value = 0.25;
-    n2.connect(sf); sf.connect(sg); o3.connect(g3); g3.connect(sg); sg.connect(this.master);
-    o1.start(); o2.start(); n.start(); n2.start(); o3.start();
-    this.eng = { o1, o2, f, g, n, ng, n2, sf, sg, o3 };
+    if (!this.ctx || this.eng) return;
+    const bus = this.ctx.createGain(); bus.gain.value = SND.engine; bus.connect(this.master);
+    const send = this.ctx.createGain(); send.gain.value = 0.08; bus.connect(send); send.connect(this.revIn);
+    this.eng = this.makeEngineVoice(bus, true); this.eng.bus = bus; this.eng.lastLoad = 0;
   }
-  updateEngine(r, thr, nitro, mute, squeal = 0) {
-    const e = this.eng; if (!e) return; const t = this.ctx.currentTime;
-    const gears = 5, x = clamp(r, 0, 1.15) * gears, gear = Math.min(gears - 1, Math.floor(x)), frac = x - gear;
-    const rpm = gear === 0 ? 0.2 + 0.8 * frac : 0.4 + 0.6 * frac;
-    const fr = 40 + rpm * 95 + gear * 7 + thr * 6;
-    e.o1.frequency.setTargetAtTime(fr, t, 0.04); e.o2.frequency.setTargetAtTime(fr * 0.5, t, 0.04);
-    e.f.frequency.setTargetAtTime(350 + rpm * 1300 + thr * 700, t, 0.05);
-    e.g.gain.setTargetAtTime(mute ? 0 : 0.045 + thr * 0.045, t, 0.08);
-    e.ng.gain.setTargetAtTime(mute ? 0 : nitro ? 0.13 : 0, t, 0.08);
-    e.sg.gain.setTargetAtTime(mute ? 0 : squeal * 0.1, t, 0.05);
-    e.sf.frequency.setTargetAtTime(1900 + squeal * 900, t, 0.05);
-    e.o3.frequency.setTargetAtTime(950 + squeal * 300 + Math.sin(t * 40) * 40, t, 0.03);
+  // プレイヤーの車：回転数・負荷・過給・速度・スリップ・路面から毎フレーム更新
+  updatePlayer(p, mute) {
+    const e = this.eng; if (!e) return; const t = this.now;
+    e.bus.gain.setTargetAtTime(mute ? 0 : SND.engine, t, 0.05);
+    if (mute) return;
+    const load = p.dead ? 0 : p.shiftT > 0 ? 0.05 : p.engineLoad;
+    this.setVoice(e, p.rpm, load, p.dead ? 0 : (0.16 + load * 0.16 + p.rpm / 7200 * 0.06) * 0.26);
+    e.tw.frequency.setTargetAtTime(1600 + p.boost * 5200, t, 0.05); e.tf.frequency.setTargetAtTime(2600 + p.boost * 4800, t, 0.05);
+    e.tg.gain.setTargetAtTime(p.boost * 0.018, t, 0.05);
+    const sp = Math.abs(p.vf);
+    e.wg.gain.setTargetAtTime(Math.min(0.2, (sp / 60) ** 2 * 0.12), t, 0.1);
+    e.rg.gain.setTargetAtTime(p.onGround && !p.offroad ? Math.min(0.12, sp / 60 * 0.1) : 0, t, 0.08);
+    e.gg.gain.setTargetAtTime(p.onGround && p.offroad ? Math.min(0.6, sp / 30 * 0.5) : 0, t, 0.06);
+    const sq = p.dead ? 0 : p.drifting ? clamp(Math.abs(p.slip) / 0.6, 0.35, 1) : (p.onGround && sp > 12 && Math.abs(p.vl) > 5 ? 0.4 : 0);
+    const wob = Math.sin(t * 37) * 25 + Math.sin(t * 11) * 15;
+    e.sg.gain.setTargetAtTime(sq * 0.22, t, 0.04);
+    e.sf1.frequency.setTargetAtTime(950 + sq * 250 + wob, t, 0.03); e.sf2.frequency.setTargetAtTime(2100 + sq * 400 - wob, t, 0.03); e.so.frequency.setTargetAtTime(1000 + sq * 200 + wob, t, 0.03);
+    e.nng.gain.setTargetAtTime(p.nitroOn || p.boostT > 0 ? 0.13 : 0, t, 0.06);
+    if (e.lastLoad > 0.6 && load < 0.2 && p.boost > 0.45 && !p.dead) this.bov(p.boost);   // アクセルを抜いた瞬間の「プシュッ」
+    e.lastLoad = load;
   }
-  stopEngine() { const e = this.eng; if (!e) return; try { e.o1.stop(); e.o2.stop(); e.n.stop(); e.n2.stop(); e.o3.stop(); } catch (er) {} e.g.disconnect(); e.ng.disconnect(); e.sg.disconnect(); this.eng = null; }
+  bov(boost) {
+    const d = this.eng ? this.eng.bus : this.master;
+    this.burst(d, { dur: 0.45, type: 'highpass', f: 1600, fEnd: 3800, q: 0.7, vol: 0.28 * boost, attack: 0.005 });
+    this.burst(d, { dur: 0.25, type: 'bandpass', f: 5200, q: 3, vol: 0.12 * boost, attack: 0.01 });
+  }
+  shift(up) {   // シフトチェンジの「ガコッ」
+    if (!this.ctx) return; const d = this.eng ? this.eng.bus : this.master;
+    this.osc(d, { f: up ? 95 : 130, fEnd: 45, dur: 0.07, vol: 0.35 });
+    this.burst(d, { dur: 0.03, type: 'bandpass', f: 1800, q: 2, vol: 0.18 });
+  }
+  // ---------------- ライバル車のエンジン（3D 定位＋ドップラー効果）
+  updateAI(cars, camVel) {
+    if (!this.ctx) return; const t = this.now;
+    for (const c of cars) {
+      if (c.isPlayer) continue;
+      let v = this.aiVoices.get(c);
+      if (!v) {
+        const ctx = this.ctx, p = ctx.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 7; p.rolloffFactor = 1.3; p.maxDistance = 2000;
+        const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.connect(p); p.connect(this.master);
+        const s = ctx.createGain(); s.gain.value = 0.15; p.connect(s); s.connect(this.revIn);
+        v = this.makeEngineVoice(lp, false); v.panner = p; v.dlp = lp; this.aiVoices.set(c, v);
+      }
+      const d = this.lis.distanceTo(c.pos);
+      _v1.set(c.pos.x - this.lis.x, 0, c.pos.z - this.lis.z).normalize();
+      const vr = -((c.vx - camVel.x) * _v1.x + (c.vz - camVel.z) * _v1.z);   // 近づく速さ
+      const pitch = clamp(343 / (343 - vr), 0.8, 1.25);
+      v.panner.positionX.setTargetAtTime(c.pos.x, t, 0.03); v.panner.positionY.setTargetAtTime(c.y + 0.5, t, 0.03); v.panner.positionZ.setTargetAtTime(c.pos.z, t, 0.03);
+      v.dlp.frequency.setTargetAtTime(clamp(16000 / (1 + d / 30), 600, 16000), t, 0.05);
+      this.setVoice(v, c.rpm, c.dead ? 0 : (c.shiftT > 0 ? 0.05 : c.engineLoad), c.dead || d > 250 ? 0 : 0.16, pitch);
+    }
+  }
+  stopEngine() {
+    const kill = v => { for (const n of v.nodes) { try { n.stop(); } catch (er) {} } v.out.disconnect(); if (v.bus) v.bus.disconnect(); if (v.panner) v.panner.disconnect(); };
+    if (this.eng) { kill(this.eng); this.eng = null; }
+    for (const v of this.aiVoices.values()) kill(v);
+    this.aiVoices.clear();
+    for (const l of [...this.loops]) l.stop();
+  }
+  pauseAll(on) { if (this.ctx) this.master.gain.setTargetAtTime(on ? 0 : SND.master, this.now, 0.05); }
   driftLevel(lv) { this.tone({ freq: [700, 950, 1250][lv - 1], dur: 0.12, type: 'square', vol: 0.07 }); this.tone({ freq: [1050, 1420, 1870][lv - 1], dur: 0.16, type: 'triangle', vol: 0.06, delay: 0.05 }); }
   boost(lv) { this.noise({ dur: 0.5 + lv * 0.2, freq: 600, freqEnd: 2400, q: 1, vol: 0.25, attack: 0.02 }); this.tone({ freq: 200, freqEnd: 520, dur: 0.4, type: 'sawtooth', vol: 0.05 }); }
 }
@@ -551,6 +754,8 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const shadowLights = [];
 
 function renderScene(scene, camera) {
+  // ガレージはスポットライトの映り込みが強いので、光のにじみが出る明るさを上げる
+  bloomPass.threshold = scene === garage.scene ? 1.8 : CONFIG.graphics.bloomThreshold;
   if (Q.bloom) { renderPass.scene = scene; renderPass.camera = camera; composer.render(); }
   else renderer.render(scene, camera);
 }
@@ -707,14 +912,97 @@ const WHEEL_R = 0.36;
 function flameGeo() { return geo('flame', () => { const g = new THREE.ConeGeometry(0.15, 1.3, 10, 1, true); g.rotateX(-Math.PI / 2); return g; }); }
 function tipGeo() { return geo('tip', () => { const g = new THREE.ConeGeometry(0.055, 0.18, 8); g.rotateX(Math.PI / 2); return g; }); }
 
+/* ---------- Blenderで作った車モデル（assets/car.glb, tools/build_car.py で生成） ---------- */
+let CAR = null;  // { body, wheel, caliper, parts:{Wing_Std, Wing_GT, Aero_GT, BullBar, LightBar} }
+async function loadCarAsset() {
+  try {
+    const gltf = await new GLTFLoader().loadAsync('assets/car.glb');
+    const get = n => gltf.scene.getObjectByName(n);
+    const car = { body: get('Body'), wheel: get('Wheel'), caliper: get('Caliper'), bodyLod: get('Body_LOD'), wheelLod: get('Wheel_LOD'), parts: {} };
+    for (const n of ['Wing_Std', 'Wing_GT', 'Aero_GT', 'BullBar', 'LightBar']) car.parts[n] = get(n);
+    if (!car.body || !car.wheel) throw new Error('car.glb に Body / Wheel がありません');
+    CAR = car;
+  } catch (e) { console.warn('car.glb を読み込めなかったため、簡易モデルを使います', e); CAR = null; }
+}
+// glb のマテリアル名 → ゲーム用の物理ベースマテリアル
+const CAR_MAT_DEFS = {
+  Glass: () => new THREE.MeshPhysicalMaterial({ color: 0x05080b, roughness: 0.03, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.6 }),
+  Trim: () => new THREE.MeshPhysicalMaterial({ color: 0x0b0b0c, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.2 }),
+  Chrome: () => new THREE.MeshStandardMaterial({ color: 0xf2f2f2, metalness: 1, roughness: 0.07 }),
+  Carbon: () => new THREE.MeshPhysicalMaterial({ color: 0x121316, metalness: 0.35, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.04 }),
+  WellLiner: () => new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.95 }),
+  Grille: () => new THREE.MeshStandardMaterial({ color: 0x050506, metalness: 0.35, roughness: 0.5 }),
+  HeadLens: () => new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.02, transparent: true, opacity: 0.16, clearcoat: 1, envMapIntensity: 2.2, depthWrite: false }),
+  Reflector: () => new THREE.MeshStandardMaterial({ color: 0xdfe2e8, metalness: 1, roughness: 0.1 }),
+  HeadLED: () => new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xeef4ff, emissiveIntensity: 4.5 }),
+  TailLens: () => new THREE.MeshPhysicalMaterial({ color: 0x3a0407, roughness: 0.08, clearcoat: 1 }),
+  Exhaust: () => new THREE.MeshStandardMaterial({ color: 0xb09e8a, metalness: 1, roughness: 0.26 }),
+  Tire: () => new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 }),
+  Rim: () => new THREE.MeshStandardMaterial({ color: 0x2c2e33, metalness: 0.95, roughness: 0.27 }),
+  Brake: () => new THREE.MeshStandardMaterial({ color: 0x8c8c8e, metalness: 1, roughness: 0.42 }),
+  Caliper: () => new THREE.MeshPhysicalMaterial({ color: 0xc8151a, roughness: 0.35, clearcoat: 0.8 }),
+  Amber: () => new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff9a10, emissiveIntensity: 4 }),
+};
+const CAR_MATS = {};
+function carMat(name, hasAO, per) {
+  if (name === 'Paint') return hasAO ? per.paintAO : per.paint;
+  if (name === 'TailLED') return per.tail;
+  const key = name + (hasAO ? ':ao' : '');
+  if (!CAR_MATS[key]) {
+    const m = (CAR_MAT_DEFS[name] || (() => new THREE.MeshStandardMaterial({ color: 0x222222 })))();
+    if (hasAO && !m.transparent) m.vertexColors = true;   // Blenderで焼いたAO（頂点カラー）を掛ける
+    CAR_MATS[key] = m;
+  }
+  return CAR_MATS[key];
+}
+function cloneCarPart(src, per, receive = false) {
+  const o = src.clone(true);
+  o.traverse(m => {
+    if (!m.isMesh) return;
+    m.material = carMat(m.material.name, !!m.geometry.attributes.color, per);
+    m.castShadow = !m.material.transparent; m.receiveShadow = receive;
+  });
+  return o;
+}
+function addCarPart(parent, src, per, receive = false) { const o = cloneCarPart(src, per, receive); parent.add(o); return o; }
+// 近くは高精細、遠く（と影の計算）は軽いモデルに自動で切り替える
+function addLodPart(parent, hi, lo, per, receive, dist) {
+  if (!lo) return addCarPart(parent, hi, per, receive);
+  const lod = new THREE.LOD();
+  lod.addLevel(cloneCarPart(hi, per, receive), 0);
+  lod.addLevel(cloneCarPart(lo, per, receive), dist);
+  parent.add(lod);
+  return lod;
+}
+function buildGlbBody(body, eq, per) {
+  addLodPart(body, CAR.body, CAR.bodyLod, per, true, 24);
+  const want = eq.body === 'light' ? ['Wing_GT', 'Aero_GT'] : eq.body === 'heavy' ? ['BullBar', 'LightBar'] : ['Wing_Std'];
+  for (const n of want) if (CAR.parts[n]) addCarPart(body, CAR.parts[n], per);
+  for (const x of [0.47, 0.63, -0.47, -0.63]) {
+    const f = new THREE.Mesh(flameGeo(), per.flameMat); f.position.set(x, 0.29, -2.85); f.visible = false; body.add(f); per.flames.push(f);
+  }
+}
+function addGlbWheels(root, wheels, per) {
+  for (const [x, z, front] of [[0.83, 1.39, true], [-0.83, 1.39, true], [0.83, -1.39, false], [-0.83, -1.39, false]]) {
+    const pivot = new THREE.Group(); pivot.position.set(x, WHEEL_R, z); root.add(pivot);
+    const sp = new THREE.Group(); pivot.add(sp);
+    const w = addLodPart(sp, CAR.wheel, CAR.wheelLod, per, false, 18); if (x < 0) w.rotation.y = Math.PI;   // ホイールの表面を外側に向ける
+    if (CAR.caliper) { const c = addCarPart(pivot, CAR.caliper, per); if (x < 0) c.rotation.y = Math.PI; }
+    wheels.push({ pivot, spin: sp, front });
+  }
+}
+
 function buildCarModel(eq, colorHex) {
   const root = new THREE.Group(), body = new THREE.Group(); root.add(body);
-  const paint = new THREE.MeshPhysicalMaterial({ color: colorHex, metalness: 0.55, roughness: 0.34, clearcoat: 1, clearcoatRoughness: 0.12 });
+  const paint = new THREE.MeshPhysicalMaterial({ color: colorHex, metalness: 0.6, roughness: 0.36, clearcoat: 1, clearcoatRoughness: 0.03 });
+  const paintAO = paint.clone(); paintAO.vertexColors = true;
   const tail = new THREE.MeshStandardMaterial({ color: 0x300000, emissive: 0xff1a1a, emissiveIntensity: 2.2 });
   const flameMat = M.flame.clone();
   const add =(g, m, x, y, z, rx = 0, ry = 0, rz = 0, parent = body) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); o.castShadow = true; parent.add(o); return o; };
-
-  // ---- ボディ・キャビン・ガラス
+  const flames = [];
+  if (CAR) buildGlbBody(body, eq, { paint, paintAO, tail, flameMat, flames });
+  else {
+  // ---- ボディ・キャビン・ガラス（glbが無いときの簡易モデル）
   add(bodyGeo(), paint, 0, 0, 0);
   add(cabinGeo(), paint, 0, 0, 0);
   add(sideGlassGeo(), M.glass, 0, 0, 0);
@@ -745,7 +1033,6 @@ function buildCarModel(eq, colorHex) {
     add(cyl(0.055, 0.055, 0.02, 16, true), M.dark, x, 0.8, z + 0.01);
   }
   add(box(1.3, 0.1, 0.3), M.carbon, 0, 0.3, -2.28);
-  const flames = [];
   for (const x of [0.47, 0.63, -0.47, -0.63]) {
     add(cyl(0.055, 0.055, 0.14, 12, true), M.chrome, x, 0.33, -2.36);
     const f = new THREE.Mesh(flameGeo(), flameMat); f.position.set(x, 0.33, -3.0); f.visible = false; body.add(f); flames.push(f);
@@ -770,15 +1057,17 @@ function buildCarModel(eq, colorHex) {
     add(box(1.0, 0.08, 0.12), M.dark, 0, 1.36, 0.15);
     for (const x of [-0.36, -0.12, 0.12, 0.36]) add(box(0.17, 0.07, 0.04), M.amber, x, 1.36, 0.22);
   }
+  }
   // ---- 装甲
   if (eq.armor !== 'none') {
     add(box(1.9, 0.36, 0.08), M.armor, 0, 0.5, 2.47, -0.3);
-    add(box(1.2, 0.04, 0.9), M.armor, 0, 0.93, 1.5, 0.14);
-    for (const x of [-0.4, 0, 0.4]) add(box(0.04, 0.04, 0.95), M.armor, x, 1.15, 0.53, 0.435);
+    add(box(1.2, 0.04, 0.9), M.armor, 0, CAR ? 0.9 : 0.93, 1.5, 0.14);
+    if (CAR) for (const x of [-0.4, 0, 0.4]) add(box(0.04, 0.04, 0.72), M.armor, x, 1.17, 0.6, 0.5);
+    else for (const x of [-0.4, 0, 0.4]) add(box(0.04, 0.04, 0.95), M.armor, x, 1.15, 0.53, 0.435);
   }
   if (eq.armor === 'full') {
     for (const x of [1.0, -1.0]) add(box(0.1, 0.34, 2.9), M.armor, x, 0.55, 0);
-    for (const x of [0.74, -0.74]) for (const z of [-0.75, -0.3, 0.15]) add(box(0.035, 0.26, 0.035), M.armor, x, 1.11, z);
+    for (const x of CAR ? [0.82, -0.82] : [0.74, -0.74]) for (const z of [-0.75, -0.3, 0.15]) add(box(0.035, 0.26, 0.035), M.armor, x, 1.11, z);
     add(box(1.9, 0.3, 0.08), M.armor, 0, 0.6, -2.46, 0.25);
   }
   // ---- machine gun
@@ -821,7 +1110,8 @@ function buildCarModel(eq, colorHex) {
   const rimG = geo('rim', () => { const g = new THREE.CylinderGeometry(0.255, 0.255, 0.31, 24); g.rotateZ(Math.PI / 2); return g; });
   const hubG = geo('hub', () => { const g = new THREE.CylinderGeometry(0.06, 0.06, 0.33, 10); g.rotateZ(Math.PI / 2); return g; });
   const wheels = [];
-  for (const [x, z, front] of [[0.83, 1.39, true], [-0.83, 1.39, true], [0.83, -1.39, false], [-0.83, -1.39, false]]) {
+  if (CAR) addGlbWheels(root, wheels, { paint, paintAO, tail });
+  else for (const [x, z, front] of [[0.83, 1.39, true], [-0.83, 1.39, true], [0.83, -1.39, false], [-0.83, -1.39, false]]) {
     const pivot = new THREE.Group(); pivot.position.set(x, WHEEL_R, z); root.add(pivot);
     const sp = new THREE.Group(); pivot.add(sp);
     add(tire, M.tire, 0, 0, 0, 0, 0, 0, sp);
@@ -832,9 +1122,10 @@ function buildCarModel(eq, colorHex) {
   }
   const sc = eq.body === 'light' ? [0.96, 0.93, 0.97] : eq.body === 'heavy' ? [1.07, 1.1, 1.05] : [1, 1, 1];
   root.scale.set(sc[0], sc[1], sc[2]);
-  return { root, body, wheels, muzzle, pods, flames, flameMat, paint, tail, spin, smoke };
+  return { root, body, wheels, muzzle, pods, flames, flameMat, paint, paintAO, tail, spin, smoke,
+    setColor(hex) { paint.color.setHex(hex); paintAO.color.setHex(hex); } };
 }
-function disposeModel(m) { m.paint.dispose(); m.tail.dispose(); m.flameMat.dispose(); m.root.removeFromParent(); }
+function disposeModel(m) { m.paint.dispose(); m.paintAO.dispose(); m.tail.dispose(); m.flameMat.dispose(); m.root.removeFromParent(); }
 
 /* ===================== particles ===================== */
 const P_VS = `attribute float aSize; attribute float aAlpha; attribute vec3 aColor; uniform float uScale;
@@ -1302,6 +1593,9 @@ class Car {
     // drift
     this.drifting = false; this.driftDir = 0; this.driftT = 0; this.driftLv = 0; this.driftPts = 0; this.driftHit = false;
     this.slip = 0; this.boostT = 0; this.boostLv = 1; this.recoverT = 0; this.driftScore = 0; this.skidPrev = [null, null];
+    // drivetrain & suspension
+    this.gear = 1; this.rpm = DRIVETRAIN.idle; this.shiftT = 0; this.boost = 0; this.engineLoad = 0;
+    this.yawRate = 0; this.prevHeading = null; this.rollV = 0; this.pitchV = 0; this.heave = 0; this.heaveV = 0;
   }
   /* ---------- drift ---------- */
   startDrift(dir) {
@@ -1360,7 +1654,7 @@ class Car {
     this.pos.set(tr.px[i] + tr.sx[i] * lat, 0, tr.pz[i] + tr.sz[i] * lat);
     this.heading = tr.ang[i]; this.vx = this.vz = this.vf = this.vl = 0; this.y = 0; this.vy = 0; this.onGround = true;
     this.invuln = 2; this.dead = false; this.model.root.visible = true;
-    this.drifting = false; this.boostT = 0; this.slip = 0; this.recoverT = 0; this.skidPrev = [null, null];
+    this.drifting = false; this.boostT = 0; this.slip = 0; this.recoverT = 0; this.skidPrev = [null, null]; this.gear = 1; this.prevHeading = null;
   }
   damage(amount, attacker, hx, hz) {
     if (this.dead || this.invuln > 0 || this.finished) return;
@@ -1379,7 +1673,7 @@ class Car {
   destroy(attacker) {
     const r = this.race; this.hp = 0; this.dead = true; this.deadT = 3;
     r.fx.explosion(this.pos.x, this.y + 0.8, this.pos.z, 1.3);
-    sound.explosion(r.volAt(this.pos));
+    sound.explosionAt(new THREE.Vector3(this.pos.x, this.y + 0.8, this.pos.z), 1.3);
     if (r.player) { const d = r.player.pos.distanceTo(this.pos); r.shake(clamp(1 - d / 60, 0, 1) * 0.9); }
     let killer = attacker && attacker !== this ? attacker : null;
     if (!killer && this.lastHitBy && r.time - this.lastHitT < 5) killer = this.lastHitBy;
@@ -1423,6 +1717,27 @@ class Car {
     if (this.offroad) top *= 0.55;
     const thr = racing ? inp.throttle : 0, brk = racing ? inp.brake : 0;
     const prevVf = vf;
+    // ---- ドライブトレイン：ギア・回転数・ターボ過給・トルクカーブ
+    {
+      const DT = DRIVETRAIN;
+      const wheelRpm = Math.abs(this.drifting ? Math.hypot(this.vx, this.vz) * 1.12 : vf) / (2 * Math.PI * WHEEL_R) * 60;
+      let rpm = wheelRpm * DT.ratios[this.gear - 1] * DT.final;
+      if (this.shiftT > 0) this.shiftT -= dt;
+      else if (racing && rpm > DT.up && this.gear < DT.ratios.length && this.onGround && vf > 0) {
+        this.gear++; this.shiftT = DT.shiftTime;
+        if (this.isPlayer) { sound.shift(true); if (this.boost > 0.5) sound.bov(this.boost); }
+      } else if (this.gear > 1 && rpm < DT.down) { this.gear--; this.shiftT = 0.08; if (this.isPlayer) sound.shift(false); }
+      rpm = wheelRpm * DT.ratios[this.gear - 1] * DT.final;
+      const launch = this.gear === 1 ? thr * 3600 * clamp(1 - wheelRpm / 400, 0, 1) : 0;   // 発進時は半クラッチで回転を上げる
+      const rev = racing ? 0 : clamp(inp.throttle, 0, 1) * 5200;                              // スタート前の空ぶかし
+      const tgt = clamp(Math.max(rpm, DT.idle + launch + rev), DT.idle, DT.redline);
+      this.rpm += (tgt - this.rpm) * Math.min(1, dt * (this.shiftT > 0 ? 25 : 14));
+      if (this.rpm > DT.redline - 60 && (thr > 0 || rev > 0)) this.rpm -= Math.random() * 450;   // レブリミッター
+      const boostTgt = (racing ? thr : clamp(inp.throttle, 0, 1)) * clamp((this.rpm - 2200) / 2600, 0, 1);
+      this.boost += (boostTgt - this.boost) * Math.min(1, dt * (boostTgt > this.boost ? 1.6 : 5));   // ターボラグ
+      this.engineLoad = clamp((racing ? thr : clamp(inp.throttle, 0, 1) * 0.8) * (0.55 + this.boost * 0.45) + (this.nitroOn ? 0.2 : 0), 0, 1);
+      acc *= (0.82 + 0.3 * Math.sin(clamp((this.rpm - 1500) / 5200, 0, 1) * Math.PI)) * (this.shiftT > 0 ? 0.2 : 1);
+    }
     if (!this.drifting && racing && inp.drift && this.onGround && Math.abs(inp.steer) > 0.3 && vf > D.startSpeed) this.startDrift(Math.sign(inp.steer));
     if (this.drifting && this.onGround) {
       this.updateDrift(dt, top, acc, thr, brk, racing);
@@ -1459,7 +1774,7 @@ class Car {
         this.vx *= 0.985; this.vz *= 0.985;
         if (vn > 3) {
           fx.sparks(this.pos.x + tr.sx[i] * s * 1.1, this.y + 0.6, this.pos.z + tr.sz[i] * s * 1.1, 6, 7);
-          if (this.scrapeT <= 0) { sound.scrape(r.volAt(this.pos)); this.scrapeT = 0.15; if (this.isPlayer) r.shake(Math.min(0.3, vn * 0.02)); }
+          if (this.scrapeT <= 0) { sound.scrapeAt(this.pos, vn); this.scrapeT = 0.15; if (this.isPlayer) r.shake(Math.min(0.3, vn * 0.02)); }
         }
       }
       this.lat = s * lim;
@@ -1478,6 +1793,7 @@ class Car {
     if (!this.onGround) {
       this.vy -= CONFIG.gravity * dt; this.y += this.vy * dt;
       if (this.y <= gh) {
+        this.heaveV += this.vy * 0.06;   // 着地でサスペンションが沈む
         if (this.vy < -5) { if (this.isPlayer) { r.shake(0.3); sound.thump(1); } fx.dust(this.pos.x, 0.3, this.pos.z, Math.round(10 * PQ), [0.6, 0.45, 0.33], 2); fx.sparks(this.pos.x, 0.2, this.pos.z, 8, 6); }
         this.y = gh; this.vy = 0; this.onGround = true;
       }
@@ -1543,11 +1859,21 @@ class Car {
   syncModel(dt) {
     const m = this.model, root = m.root;
     root.position.set(this.pos.x, this.y, this.pos.z); root.rotation.y = this.heading;
-    const k = Math.min(1, dt * 8);
-    const tRoll = this.onGround ? clamp(-this.vl * 0.018 + this.steerVis * Math.abs(this.vf) * 0.0012, -0.09, 0.09) : 0;
-    const tPitch = this.onGround ? clamp(-(this.accelNow || 0) * 0.0035, -0.06, 0.06) : clamp(-Math.atan2(this.vy, Math.abs(this.vf) + 1) * 0.6, -0.3, 0.3);
-    this.roll += (tRoll - this.roll) * k; this.pitch += (tPitch - this.pitch) * k;
+    // サスペンション：ばね＋ダンパーで、加減速・旋回・着地に合わせて車体が沈み込んで揺り戻す
+    if (dt > 0) {
+      const yr = this.prevHeading == null ? 0 : wrapAngle(this.heading - this.prevHeading) / dt;
+      this.prevHeading = this.heading;
+      this.yawRate += (yr - this.yawRate) * Math.min(1, dt * 10);
+      const latAcc = this.vf * this.yawRate;
+      const tRoll = this.onGround ? clamp(latAcc * 0.003 - this.vl * 0.004, -0.065, 0.065) : 0;
+      const tPitch = this.onGround ? clamp(-(this.accelNow || 0) * 0.004, -0.07, 0.07) : clamp(-Math.atan2(this.vy, Math.abs(this.vf) + 1) * 0.6, -0.3, 0.3);
+      const K = 110, C = 11;
+      this.rollV += ((tRoll - this.roll) * K - this.rollV * C) * dt; this.roll += this.rollV * dt;
+      this.pitchV += ((tPitch - this.pitch) * K - this.pitchV * C) * dt; this.pitch += this.pitchV * dt;
+      this.heaveV += (-this.heave * 140 - this.heaveV * 12) * dt; this.heave = clamp(this.heave + this.heaveV * dt, -0.09, 0.06);
+    }
     m.body.rotation.set(this.pitch, 0, this.roll);
+    m.body.position.y = this.heave;
     // ドリフト中は前輪をカウンターステアの向きに
     const steerAng = this.drifting ? clamp(-this.slip * 0.8, -0.6, 0.6) : this.steerVis * 0.45;
     for (const w of m.wheels) { w.spin.rotation.x += this.vf * dt / WHEEL_R; if (w.front) w.pivot.rotation.y += (steerAng - w.pivot.rotation.y) * Math.min(1, dt * 12); }
@@ -1658,6 +1984,9 @@ class HUD {
     this.set('hTime', fmtTime(r.state === 'race' || r.state === 'done' ? (p.finished ? p.finishTime : r.time) : 0));
     this.set('hBest', fmtTime(p.bestLap));
     this.set('hSpeed', String(Math.round(Math.abs(p.vf) * 3.6)));
+    this.set('hGear', p.vf < -1 ? 'R' : String(p.gear));
+    const rr = p.rpm / DRIVETRAIN.redline;
+    $('rpmBar').firstElementChild.style.width = (clamp(rr, 0, 1) * 100).toFixed(1) + '%'; $('rpmBar').classList.toggle('red', rr > 0.94);
     const hpR = clamp(p.hp / p.maxHp, 0, 1);
     $('hpBar').firstElementChild.style.width = (hpR * 100).toFixed(1) + '%'; $('hpBar').classList.toggle('low', hpR < 0.35);
     this.set('hHp', String(Math.ceil(p.hp)));
@@ -1772,7 +2101,7 @@ class Race {
     const V = 240, dmg = car.stats.mg.dmg * (car.isPlayer ? 1 : CONFIG.aiDamageScale);
     if (this.bullets.length < 320) this.bullets.push({ x: _v1.x, y: _v1.y, z: _v1.z, vx: dx * V + car.vx, vy: dy * V, vz: dz * V + car.vz, life: 0.6, owner: car, dmg });
     this.fx.muzzle(_v1.x, _v1.y, _v1.z, fx, fz);
-    sound.shoot(car.isPlayer ? 0.6 : this.volAt(car.pos) * 0.5);
+    sound.gunAt(_v1, car.isPlayer, car.stats.mg.id);
   }
   fireMissile(car) {
     const pod = car.model.pods[car.podIdx++ % car.model.pods.length]; pod.getWorldPosition(_v1);
@@ -1787,14 +2116,14 @@ class Race {
     }
     const mesh = this.world.missilePool.find(m => !m.visible); if (!mesh) return;
     mesh.visible = true;
-    this.missiles.push({ mesh, pos: _v1.clone(), dir: new THREE.Vector3(fx, 0.02, fz).normalize(), speed: Math.max(car.vf, 0) + 25, target, owner: car, life: 5, age: 0, dmg: car.stats.ms.dmg * (car.isPlayer ? 1 : CONFIG.aiDamageScale) });
+    this.missiles.push({ mesh, pos: _v1.clone(), snd: sound.rocketLoop(_v1), dir: new THREE.Vector3(fx, 0.02, fz).normalize(), speed: Math.max(car.vf, 0) + 25, target, owner: car, life: 5, age: 0, dmg: car.stats.ms.dmg * (car.isPlayer ? 1 : CONFIG.aiDamageScale) });
     for (let i = 0; i < 6; i++) this.fx.smk.spawn(_v1.x, _v1.y, _v1.z, rand(-2, 2) - fx * 4, rand(0, 2), rand(-2, 2) - fz * 4, 0.7, 0.7, 0.7, 1, 1, 3, 0.5, 2, -0.5);
-    sound.missile(car.isPlayer ? 0.8 : this.volAt(car.pos));
+    sound.missileAt(_v1, car.isPlayer);
     if (target && target.isPlayer) this.hud.feed(`⚠ ${car.name} のミサイル！`, 'var(--red)');
   }
   explode(pos, dmg, owner, direct) {
     this.fx.explosion(pos.x, pos.y, pos.z, 1);
-    sound.explosion(this.volAt(pos) * 0.8);
+    sound.explosionAt(pos, 1);
     const pd = this.player.pos.distanceTo(pos); this.shake(clamp(1 - pd / 45, 0, 1) * 0.6);
     for (const c of this.cars) {
       if (c.dead) continue;
@@ -1821,7 +2150,7 @@ class Race {
       if (hit) {
         const hx = b.x + sx * hitT, hy = b.y + sy * hitT, hz = b.z + sz * hitT;
         this.fx.sparks(hx, hy, hz, 5, 7); hit.damage(b.dmg, b.owner, b.x, b.z);
-        if (b.owner.isPlayer) sound.hit(0.35);
+        sound.impactAt(_v2.set(hx, hy, hz));
         this.bullets.splice(i, 1); continue;
       }
       b.x += sx; b.y += sy; b.z += sz;
@@ -1842,6 +2171,7 @@ class Race {
       }
       m.pos.addScaledVector(m.dir, m.speed * dt);
       m.mesh.position.copy(m.pos); _v1.copy(m.pos).add(m.dir); m.mesh.lookAt(_v1);
+      if (m.snd) m.snd.set(m.pos);
       const tx = m.pos.x - m.dir.x * 0.6, ty = m.pos.y - m.dir.y * 0.6, tz = m.pos.z - m.dir.z * 0.6;
       this.fx.smk.spawn(tx, ty, tz, rand(-0.4, 0.4), rand(0, 0.6), rand(-0.4, 0.4), 0.72, 0.7, 0.68, rand(0.9, 1.4), 0.5, 2.4, 0.55, 1.5, -0.3);
       this.fx.add.spawn(tx, ty, tz, -m.dir.x * 5, 0, -m.dir.z * 5, 6, 3, 0.8, 0.08, 0.8, 0.3, 1);
@@ -1852,6 +2182,7 @@ class Race {
       }
       if (direct || m.life <= 0 || m.pos.y < 0.15) {
         this.explode(m.pos, m.dmg, m.owner, direct);
+        if (m.snd) m.snd.stop();
         m.mesh.visible = false; this.missiles.splice(i, 1);
       }
     }
@@ -1946,8 +2277,9 @@ class Race {
     if (this.time > 900 && this.state === 'race') { this.state = 'done'; this.doneT = 4.5; }
     this.updateCamera(dt);
     this.hud.update(dt);
-    const squeal = p.dead ? 0 : p.drifting ? clamp(Math.abs(p.slip) / 0.6, 0.35, 1) : (p.onGround && Math.abs(p.vf) > 12 && Math.abs(p.vl) > 5 ? 0.35 : 0);
-    sound.updateEngine(Math.abs(p.vf) / p.stats.top, this.state === 'intro' || this.state === 'count' ? (keys.has('ArrowUp') || keys.has('KeyW') ? 1 : 0) : p.input.throttle, p.nitroOn || p.boostT > 0, p.dead, squeal);
+    sound.setListener(this.camera);
+    sound.updatePlayer(p, false);
+    sound.updateAI(this.cars, { x: p.vx, z: p.vz });
   }
   updateCamera(dt) {
     const p = this.player, cam = this.camera, W = this.world;
@@ -2018,7 +2350,7 @@ function buildGarage() {
     const panel = new THREE.Mesh(box(2.6, 6.5, 0.2), new THREE.MeshStandardMaterial({ color: 0x0d1118, metalness: 0.6, roughness: 0.5 }));
     panel.position.set(Math.cos(a) * (r + 0.4), 3.25, Math.sin(a) * (r + 0.4)); panel.lookAt(0, 3.25, 0); scene.add(panel);
   }
-  const key = new THREE.SpotLight(0xffffff, 520, 40, 0.42, 0.65, 2); key.position.set(-4, 10, 6); key.target.position.set(0, 0.6, 0);
+  const key = new THREE.SpotLight(0xffffff, 380, 40, 0.42, 0.65, 2); key.position.set(-4, 10, 6); key.target.position.set(0, 0.6, 0);
   key.castShadow = Q.shadow > 0; key.shadow.mapSize.set(1024, 1024); key.shadow.bias = -0.0004; key.shadow.normalBias = 0.03;
   scene.add(key, key.target); shadowLights.push(key);
   const rim = new THREE.SpotLight(0x4fd8ff, 320, 40, 0.55, 0.7, 2); rim.position.set(-7.5, 3.2, -1.5); rim.target.position.set(0, 0.6, 0); scene.add(rim, rim.target);
@@ -2060,13 +2392,14 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 function enterTitle() { state = 'title'; show('title'); sound.stopEngine(); }
 function enterGarage() {
   if (race) { race.dispose(); race = null; }
-  sound.stopEngine();
+  sound.stopEngine(); sound.pauseAll(false);
   state = 'garage'; show('garage'); renderGarageUI();
 }
 function startRace() {
   sound.init();
   if (document.activeElement) document.activeElement.blur();
   if (race) { race.dispose(); race = null; }
+  sound.stopEngine(); sound.pauseAll(false);
   const ld = $('loading'); ld.classList.remove('hide'); ld.firstElementChild.textContent = 'LOADING';
   setTimeout(() => {
     race = new Race();
@@ -2076,12 +2409,12 @@ function startRace() {
   }, 40);
 }
 function togglePause() {
-  if (state === 'race') { state = 'paused'; race.paused = true; show('pause'); sound.updateEngine(0, 0, false, true); }
-  else if (state === 'paused') { state = 'race'; race.paused = false; show('hud'); clock.getDelta(); }
+  if (state === 'race') { state = 'paused'; race.paused = true; show('pause'); sound.pauseAll(true); }
+  else if (state === 'paused') { state = 'race'; race.paused = false; show('hud'); clock.getDelta(); sound.pauseAll(false); }
 }
 function showResult(r) {
   if (state !== 'race') return;
-  state = 'result'; show('result'); sound.updateEngine(0, 0, false, true);
+  state = 'result'; show('result'); sound.stopEngine();
   const ranks = r.ranking(), p = r.player, pos = ranks.indexOf(p) + 1;
   const prize = CONFIG.prize[pos - 1] || 0, bonus = p.kills * CONFIG.killBonus;
   const driftBonus = Math.min(CONFIG.drift.bonusCap, Math.floor(p.driftScore / 10));
@@ -2150,7 +2483,7 @@ $('tabs').addEventListener('click', e => { const t = e.target.closest('[data-tab
 $('parts').addEventListener('click', e => {
   sound.init();
   const sw = e.target.closest('[data-color]');
-  if (sw) { save.color = +sw.dataset.color; writeSave(); garage.model.paint.color.setHex(COLORS[save.color].hex); sound.ui(); renderGarageUI(); return; }
+  if (sw) { save.color = +sw.dataset.color; writeSave(); garage.model.setColor(COLORS[save.color].hex); sound.ui(); renderGarageUI(); return; }
   const c = e.target.closest('[data-part]'); if (!c) return;
   const id = c.dataset.part, p = part(gTab, id);
   if (save.equip[gTab] === id) return;
@@ -2235,13 +2568,16 @@ function loop() {
 }
 
 /* ---------- boot ---------- */
-initTextures(); initMaterials(); buildGarage(); rebuildGarageCar();
+initTextures(); initMaterials();
+await loadCarAsset();
+buildGarage(); rebuildGarageCar();
 applyQuality(save.quality);
 enterTitle();
 loop();
 requestAnimationFrame(() => $('loading').classList.add('hide'));
 // expose for debugging
-window.__ir = { get race() { return race; }, get state() { return state; }, world: () => world, garage };
+window.__ir = { get race() { return race; }, get state() { return state; }, world: () => world, garage, sound,
+  renderOnce() { if (race) renderScene(race.scene, race.camera); else { updateGarage(0, state); renderScene(garage.scene, garage.camera); } } };
 </script>
 </body>
 </html>
